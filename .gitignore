@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+wheels/
+*.whl
+.installed.cfg
+pip-selfcheck.json
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# uv
+.python-version
+uv.lock
+
+# Type checking
+.mypy_cache/
+.pytype/
+.pyre/
+pyrightconfig.json
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# Litestar
+.litestar_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Auth material — never commit
+cookies.txt
+accounts.json
+*.token
+
+# HAR files — may contain personal data
+*.har
+
+# Local scratch
+trips.json
+*.local.*
+app/
+*/app/*
+
+# Dev/example files not part of the library
+accounts.json.example
+app-server.log
+app-server.err.log
+checks.py
+main.py
+"pyproject copy.toml"
+tests/
+pyproject copy.toml

@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ovpay.py"
+version = "0.1.0"
+description = "Unofficial async Python client for the OVpay API"
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.9",
+]
+
+[tool.setuptools]
+packages = [
+    "ovpay",
+    "ovpay.models",
+    "ovpay.internals",
+]
+package-dir = { ovpay = ".", "ovpay.models" = "models", "ovpay.internals" = "internals" }
+
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+
+reportPrivateUsage = false
