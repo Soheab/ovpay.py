@@ -21,23 +21,13 @@ configuration, FAQ articles, search results, and address lookups.
 This project is not published on PyPI. Install it directly from GitHub:
 
 ```bash
-pip install "git+https://github.com/soheab/ovpay.py.git"
+python -m pip install "ovpay.py @ git+https://github.com/soheab/ovpay.py"
 ```
 
-Or clone and install locally:
+Or with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/soheab/ovpay.py.git
-cd ovpay.py
-pip install .
-```
-
-For development with [uv](https://docs.astral.sh/uv/):
-
-```bash
-git clone https://github.com/soheab/ovpay.py.git
-cd ovpay.py
-uv sync
+uv add "ovpay.py @ git+https://github.com/soheab/ovpay.py"
 ```
 
 ## Authentication
