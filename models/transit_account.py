@@ -27,6 +27,20 @@ __all__ = (
 
 @dataclass
 class Personalization:
+    """Represents the personalization settings of a transit card.
+
+    Attributes
+    ----------
+    order: :class:`int`
+        The display order of the card in the card list.
+    name: :class:`str`
+        The user-assigned name for the card.
+    color: :class:`str`
+        The color associated with the card, e.g. ``"Blue"``.
+    medium: :class:`str` | :data:`None`
+        The card medium type, or ``None`` if not set.
+    """
+
     order: int
     name: str
     color: str
@@ -41,6 +55,16 @@ class Personalization:
 
 @dataclass
 class PersonalAccountData:
+    """Represents the personal account status of a transit card.
+
+    Attributes
+    ----------
+    is_available: :class:`bool`
+        Whether the card is available for use.
+    is_tagged: :class:`bool`
+        Whether the card is tagged to a personal account.
+    """
+
     is_available: bool
     is_tagged: bool
 
@@ -51,7 +75,40 @@ class PersonalAccountData:
 
 @dataclass
 class TransitAccount:
-    """An OVpay transit account — displayed in the UI as a card (pas/betaalmiddel)."""
+    """Represents an OVpay transit account (a card or payment method).
+
+    Attributes
+    ----------
+    xtat: :class:`str` | :data:`None`
+        The external transit account token. ``None`` when returned as the embedded
+        ``token`` field inside a :class:`~models.trip.TripDetails`.
+    xbot: :class:`str`
+        The external back-office token.
+    status: :class:`str`
+        The card status, e.g. ``"Active"`` or ``"Blocked"``.
+    medium_type: :class:`str`
+        The medium type, e.g. ``"OVChipkaart"`` or ``"Creditcard"``.
+    card_number: :class:`str` | :data:`None`
+        The card number, if available.
+    card_sequence_number: :class:`str` | :data:`None`
+        The card sequence number, if available.
+    expiration_date: :class:`datetime.datetime` | :data:`None`
+        When the card expires.
+    balance: :class:`int` | :data:`None`
+        The card balance in euro-cents. Use :attr:`balance_euros` for the float equivalent.
+    personalization: :class:`Personalization` | :data:`None`
+        The card's display settings (name, color, order).
+    personal_account_data: :class:`PersonalAccountData` | :data:`None`
+        Whether this card is linked to a personal account.
+    has_open_trip: :class:`bool`
+        ``True`` if the card currently has a check-in without a matching check-out.
+    has_full_post_paid: :class:`bool`
+        ``True`` if the card is on a full post-paid subscription.
+    arl_status: :class:`str` | :data:`None`
+        The automatic reloading status, if applicable.
+    is_provisional: :class:`bool` | :data:`None`
+        Whether this is a provisional (temporary) card.
+    """
 
     _client: OVPayClient
 
@@ -317,7 +374,16 @@ class TransitAccount:
 
 @dataclass
 class TransitAccountProducts:
-    """Products and age-discount profile from GET /api/v2/Products/{xtat}."""
+    """Represents the products associated with a transit account.
+
+    Attributes
+    ----------
+    products: :class:`list`[:class:`dict`]
+        The products linked to the card, e.g. subscriptions or day passes.
+        The structure of each entry is not fully documented.
+    age_discount_profile: :class:`dict` | :data:`None`
+        The age-discount profile for this card, or ``None`` if not applicable.
+    """
 
     products: list[dict[str, object]]
     age_discount_profile: dict[str, object] | None

@@ -21,7 +21,15 @@ __all__ = (
 
 @dataclass
 class FaqTopic:
-    """One FAQ topic from GET /api/anonymous/v1/faq/topics."""
+    """Represents a FAQ topic.
+
+    Attributes
+    ----------
+    id: :class:`str`
+        The unique identifier for this topic.
+    name: :class:`str`
+        The display name of the topic.
+    """
 
     _client: OVPayClient
     id: str
@@ -55,7 +63,20 @@ class FaqTopic:
 
 @dataclass
 class FaqArticle:
-    """One FAQ article from GET /api/anonymous/v1/faq/articles."""
+    """Represents a FAQ article.
+
+    Attributes
+    ----------
+    id: :class:`str`
+        The unique identifier for this article.
+    title: :class:`str`
+        The title of the article.
+    topic_id: :class:`str` | :data:`None`
+        The id of the topic this article belongs to, or ``None`` if unknown.
+    content: :class:`str` | :data:`None`
+        The full HTML/text content of the article. ``None`` when the article was
+        returned as part of a listing — call :meth:`get_details` to populate it.
+    """
 
     _client: OVPayClient
     id: str
@@ -87,7 +108,19 @@ class FaqArticle:
 
 @dataclass
 class FaqArticlesPage:
-    """Paginated FAQ articles from GET /api/anonymous/v1/faq/articles."""
+    """Represents a paginated list of FAQ articles.
+
+    Attributes
+    ----------
+    offset: :class:`int`
+        The index of the first item in this page.
+    batch_size: :class:`int`
+        How many items were requested per page.
+    end_of_list_reached: :class:`bool`
+        ``True`` when there are no more pages after this one.
+    items: :class:`list`[:class:`FaqArticle`]
+        The articles in this page.
+    """
 
     _client: OVPayClient
     offset: int

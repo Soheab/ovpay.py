@@ -28,7 +28,6 @@ REFRESH_LEEWAY_SECONDS = 120
 
 
 async def maybe_json(response: aiohttp.ClientResponse) -> Any:
-    """Return the response JSON if the content type is JSON, else None."""
     content_type = response.headers.get("Content-Type", "")
     if "application/json" in content_type:
         return await response.json()
@@ -36,8 +35,6 @@ async def maybe_json(response: aiohttp.ClientResponse) -> Any:
 
 
 class TokenManager:
-    """Store a bearer token and refresh cookie-backed tokens when required."""
-
     LEEWAY: ClassVar[datetime.timedelta] = datetime.timedelta(
         seconds=REFRESH_LEEWAY_SECONDS
     )
@@ -140,7 +137,6 @@ class TokenManager:
         self,
         cookie: str | pathlib.Path,
     ) -> str:
-        """Fetch a bearer token using an OVpay browser session cookie."""
         session = self._http._require_session()
         cookie_header = self.normalize_cookie(cookie)
 
@@ -260,8 +256,6 @@ class TokenManager:
 
 
 class HTTPClient:
-    """HTTP transport for authenticated and anonymous OVpay API requests."""
-
     BASE_URL: ClassVar[str] = "https://api.ovpay.nl"
     DEFAULT_HEADERS: ClassVar[dict[str, str]] = {
         "Accept": "*/*",

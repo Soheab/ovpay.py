@@ -16,6 +16,18 @@ __all__ = ("Location", "Trip", "TripDetails", "TripItem", "TripsPage")
 
 @dataclass
 class Location:
+    """Represents a check-in or check-out location.
+
+    Attributes
+    ----------
+    name: :class:`str`
+        The name of the location, e.g. ``"Amsterdam Centraal"``.
+    city: :class:`str` | :data:`None`
+        The city the location is in, if provided.
+    country: :class:`str` | :data:`None`
+        The country the location is in, if provided.
+    """
+
     name: str
     city: str | None = None
     country: str | None = None
@@ -35,6 +47,43 @@ class Location:
 
 @dataclass
 class Trip:
+    """Represents a single public-transit trip.
+
+    Attributes
+    ----------
+    xbot: :class:`str`
+        The external back-office token. Pass this together with :attr:`id`
+        to :meth:`get_details`.
+    id: :class:`int`
+        The trip id.
+    version: :class:`int`
+        The version of this trip record.
+    transport: :class:`str`
+        The mode of transport, e.g. ``"Bus"`` or ``"Train"``.
+    status: :class:`str`
+        The trip status, e.g. ``"Completed"`` or ``"Open"``.
+    check_in_location: :class:`Location` | :data:`None`
+        Where the traveller checked in.
+    check_in_timestamp: :class:`datetime.datetime` | :data:`None`
+        When the traveller checked in.
+    check_out_location: :class:`Location` | :data:`None`
+        Where the traveller checked out.
+    check_out_timestamp: :class:`datetime.datetime` | :data:`None`
+        When the traveller checked out.
+    currency: :class:`str` | :data:`None`
+        The currency code for the fare, e.g. ``"EUR"``.
+    fare: :class:`int` | :data:`None`
+        The fare in euro-cents. Use :attr:`fare_euros` for the float equivalent.
+    organisation_name: :class:`str` | :data:`None`
+        The transport operator name, e.g. ``"NS"`` or ``"GVB"``.
+    fare_nature: :class:`str` | :data:`None`
+        Describes how the fare was calculated, e.g. ``"Distance"`` or ``"Flat"``.
+    payment_method_name: :class:`str` | :data:`None`
+        The payment method used for this trip.
+    sales_product_commercial_name: :class:`str` | :data:`None`
+        The commercial product name, e.g. a subscription or day pass.
+    """
+
     _client: OVPayClient
 
     xbot: str
@@ -98,7 +147,29 @@ class Trip:
 
 @dataclass
 class TripItem:
-    """One row in a trips page — the trip plus correction/discount metadata."""
+    """Represents one row in a paginated trips response.
+
+    Wraps a :class:`Trip` together with correction and discount metadata.
+
+    Attributes
+    ----------
+    trip: :class:`Trip`
+        The underlying trip.
+    corrected_from: :data:`None`
+        Reserved for future use; always ``None`` currently.
+    corrected_from_type: :data:`None`
+        Reserved for future use; always ``None`` currently.
+    supersedes_fare: :data:`None`
+        Reserved for future use; always ``None`` currently.
+    age_discounts: :class:`list`
+        Age-based discounts applied to this trip. Structure not yet documented.
+    product_discounts: :class:`list`
+        Product-based discounts applied to this trip. Structure not yet documented.
+    day_capping: :data:`None`
+        Reserved for future use; always ``None`` currently.
+    post_paid_payment_information: :data:`None`
+        Reserved for future use; always ``None`` currently.
+    """
 
     trip: Trip
     corrected_from: None

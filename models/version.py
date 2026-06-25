@@ -11,7 +11,19 @@ __all__ = ("ApiVersion",)
 
 @dataclass
 class ApiVersion:
-    """API build version from GET /api/Version."""
+    """Represents the API version.
+
+    Attributes
+    ----------
+    major: :class:`int`
+        The major version number.
+    minor: :class:`int`
+        The minor version number.
+    patch: :class:`int`
+        The patch version number.
+    pre_release_tag: :class:`str`
+        The pre-release tag, e.g. ``"alpha"`` or ``"rc.1"``. Empty string when absent.
+    """
 
     major: int
     minor: int

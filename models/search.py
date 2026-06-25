@@ -19,6 +19,18 @@ __all__ = (
 
 @dataclass
 class SearchResult:
+    """Represents a single search result.
+
+    Attributes
+    ----------
+    title: :class:`str` | :data:`None`
+        The page or article title.
+    url: :class:`str` | :data:`None`
+        The URL of the result.
+    description: :class:`str` | :data:`None`
+        A short description or snippet.
+    """
+
     title: str | None
     url: str | None
     description: str | None
@@ -30,7 +42,13 @@ class SearchResult:
 
 @dataclass
 class SearchResponse:
-    """Search results from GET /api/anonymous/v1/Search."""
+    """Represents a search response.
+
+    Attributes
+    ----------
+    results: :class:`list`[:class:`SearchResult`]
+        The search results.
+    """
 
     results: list[SearchResult]
 
@@ -41,9 +59,14 @@ class SearchResponse:
 
 @dataclass
 class SearchSuggestions:
-    """Search suggestions from GET /api/anonymous/v1/Search/suggestions.
+    """Represents search suggestions.
 
-    Contains both ranked search result suggestions and matching FAQ article stubs.
+    Attributes
+    ----------
+    results: :class:`list`[:class:`SearchResult`]
+        Ranked search result suggestions.
+    articles: :class:`list`[:class:`dict`]
+        Matching FAQ article stubs. The structure of each entry is not fully documented.
     """
 
     results: list[SearchResult]

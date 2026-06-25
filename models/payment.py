@@ -13,14 +13,36 @@ __all__ = ("Payment", "PaymentReceipt", "PaymentsPage")
 
 @dataclass
 class Payment:
-    """A single payment / transaction associated with a card.
+    """Represents a single payment associated with a transit card.
 
-    Returned by GET /api/v1/Payments/{xtat}.
-    amount / amount_due are in euro-cents (negative = debit).
-    Use amount_euros / amount_due_euros for floats.
-
-    id: the payment event id — pass to get_payment_receipt() together with xbot.
-    xbot: the back-office token — pass to get_payment_receipt().
+    Attributes
+    ----------
+    service_reference_id: :class:`str`
+        Internal service reference identifier for this payment.
+    xbot: :class:`str`
+        The external back-office token. Pass this together with :attr:`id`
+        to :meth:`get_payment_receipt`.
+    id: :class:`str`
+        The payment event id.
+    status: :class:`str`
+        The payment status, e.g. ``"Settled"`` or ``"Rejected"``.
+    transaction_timestamp: :class:`datetime.datetime`
+        When the transaction occurred.
+    transaction_type: :class:`str`
+        The type of transaction, e.g. ``"CheckIn"`` or ``"CheckOut"``.
+    amount: :class:`int`
+        The transaction amount in euro-cents. Negative means a debit.
+        Use :attr:`amount_euros` for the float equivalent.
+    amount_due: :class:`int`
+        The amount due in euro-cents. Use :attr:`amount_due_euros` for the float equivalent.
+    currency: :class:`str`
+        The currency code, e.g. ``"EUR"``.
+    payment_method: :class:`str`
+        The payment method used, e.g. ``"Creditcard"`` or ``"OVChipkaart"``.
+    rejection_reason: :class:`str` | :data:`None`
+        The reason the payment was rejected, or ``None`` if it wasn't.
+    loyalty_or_discount: :class:`bool`
+        Whether a loyalty or discount was applied to this payment.
     """
 
     _client: OVPayClient
@@ -86,7 +108,19 @@ class Payment:
 
 @dataclass
 class PaymentsPage:
-    """Paginated payments response from GET /api/v1/Payments/{xtat}."""
+    """Represents a paginated list of payments.
+
+    Attributes
+    ----------
+    offset: :class:`int`
+        The index of the first item in this page.
+    batch_size: :class:`int`
+        How many items were requested per page.
+    end_of_list_reached: :class:`bool`
+        ``True`` when there are no more pages after this one.
+    items: :class:`list`[:class:`Payment`]
+        The payments in this page.
+    """
 
     _client: OVPayClient
     offset: int
@@ -107,9 +141,12 @@ class PaymentsPage:
 
 @dataclass
 class PaymentReceipt:
-    """Receipt from GET /api/v1/Payments/receipt/{xbot}/{payment_id}.
+    """Represents a payment receipt.
 
-    Contains the payment plus any related payments (e.g. corrections).
+    Attributes
+    ----------
+    related_payments: :class:`list`[:class:`Payment`]
+        All payments tied to this receipt, including any corrections.
     """
 
     _client: OVPayClient

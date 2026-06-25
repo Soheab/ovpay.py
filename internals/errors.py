@@ -49,6 +49,6 @@ class SessionExpiredError(AuthenticationError):
     """
 
     def __init__(self, message: str, *, error: str | None = None) -> None:
-        self.error = error
+        self.error: str | None = error
         detail = f" (server reported {error!r})" if error else ""
         super().__init__(f"{message}{detail}\n\n{RELOGIN_HINT}")

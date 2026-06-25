@@ -17,12 +17,15 @@ __all__ = (
 
 @dataclass
 class AnonymousConfig:
-    """Public (unauthenticated) feature flags from GET /api/anonymous/V2/Config.
+    """Represents the public (unauthenticated) feature configuration.
 
-    Different from the authenticated WebConfig — these flags cover public-facing
-    features like anonymous OV-card ordering, top-up, chatbot, etc.
-    Use is_enabled(key) to check a flag, e.g. is_enabled("WebLoginEnabled").
-    document_update_keys maps document names to their last-updated date strings.
+    Attributes
+    ----------
+    features: :class:`dict`[:class:`str`, :class:`bool`]
+        Feature flags keyed by name. Use :meth:`is_enabled` to check a flag
+        rather than accessing this dict directly.
+    document_update_keys: :class:`dict`[:class:`str`, :class:`str`]
+        Maps document names to their last-updated date strings.
     """
 
     features: dict[str, bool]
@@ -41,10 +44,13 @@ class AnonymousConfig:
 
 @dataclass
 class WebConfig:
-    """Feature flags from GET /api/v1/WebConfig.
+    """Represents the authenticated feature configuration.
 
-    Use is_enabled(key) to check a feature flag by its string key, e.g.:
-        config.is_enabled("TopUpBalanceEnabled")
+    Attributes
+    ----------
+    features: :class:`dict`[:class:`str`, :class:`bool`]
+        Feature flags keyed by name. Use :meth:`is_enabled` to check a flag
+        rather than accessing this dict directly.
     """
 
     features: dict[str, bool]
