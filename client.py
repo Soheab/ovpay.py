@@ -55,7 +55,6 @@ if TYPE_CHECKING:
         TripsPageData,
         WebConfigData,
     )
-
     from .poller import _BalanceCB, _PaymentCB, _TripCB
 
 

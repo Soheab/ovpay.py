@@ -7,8 +7,13 @@ from typing import TYPE_CHECKING
 from .transit_account import TransitAccount
 
 if TYPE_CHECKING:
-    from client import OVPayClient
-    from internals._types import TripData, TripDetailsData, TripItemData, TripsPageData
+    from ..client import OVPayClient
+    from ..internals._types import (
+        TripData,
+        TripDetailsData,
+        TripItemData,
+        TripsPageData,
+    )
 
 
 __all__ = ("Location", "Trip", "TripDetails", "TripItem", "TripsPage")

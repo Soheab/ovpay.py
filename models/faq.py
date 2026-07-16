@@ -4,13 +4,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from client import OVPayClient
-    from internals._types import (
+    from ..client import OVPayClient
+    from ..internals._types import (
         FaqArticleData,
         FaqArticlesPageData,
         FaqTopicData,
     )
-    from internals.pagination import Paginator
+    from ..internals.pagination import Paginator
 
 __all__ = (
     "FaqArticle",

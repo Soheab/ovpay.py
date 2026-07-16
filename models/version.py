@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from internals._types import ApiVersionData
+    from ..internals._types import ApiVersionData
 
 __all__ = ("ApiVersion",)
 

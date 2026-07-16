@@ -5,16 +5,15 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from client import OVPayClient
-    from internals._types import (
+    from ..client import OVPayClient
+    from ..internals._types import (
         CardProductsData,
         PersonalAccountDataDict,
         PersonalizationData,
         TransitAccountData,
     )
-    from internals.pagination import Paginator
-    from poller import Payment
-
+    from ..internals.pagination import Paginator
+    from ..poller import Payment
     from .trip import TripItem
 
 __all__ = (

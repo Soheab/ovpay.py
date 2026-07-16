@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from .models import Payment, TransitAccount, TripItem
 
 if TYPE_CHECKING:
-    from client import OVPayClient
+    from .client import OVPayClient
 
 log = logging.getLogger(__name__)
 

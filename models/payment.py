@@ -5,8 +5,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from client import OVPayClient
-    from internals._types import PaymentData, PaymentReceiptData, PaymentsPageData
+    from ..client import OVPayClient
+    from ..internals._types import PaymentData, PaymentReceiptData, PaymentsPageData
 
 __all__ = ("Payment", "PaymentReceipt", "PaymentsPage")
 
