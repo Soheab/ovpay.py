@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
-from models import Payment, TransitAccount, TripItem
+from .models import Payment, TransitAccount, TripItem
 
 if TYPE_CHECKING:
     from client import OVPayClient

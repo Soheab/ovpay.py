@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any, Self
 
 import aiohttp
 
-from internals.http import HTTPClient
-from internals.pagination import Paginator
-from models import (
+from .internals.http import HTTPClient
+from .internals.pagination import Paginator
+from .models import (
     Address,
     AnonymousConfig,
     ApiVersion,
@@ -32,10 +32,10 @@ from models import (
     TripsPage,
     WebConfig,
 )
-from poller import OVPayPoller
+from .poller import OVPayPoller
 
 if TYPE_CHECKING:
-    from internals._types import (
+    from .internals._types import (
         AddressData,
         AnonymousConfigData,
         ApiVersionData,
