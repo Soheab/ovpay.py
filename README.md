@@ -101,6 +101,15 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+The token can also be read directly from a file:
+
+```python
+from pathlib import Path
+
+async with OVPayClient(token=Path("ovpay.token")) as client:
+    cards = await client.get_transit_accounts()
+```
+
 > [!CAUTION]
 > Never commit tokens or cookies to Git. Store them in an ignored file,
 > environment variable, or secret manager.

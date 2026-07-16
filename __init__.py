@@ -5,6 +5,7 @@ from .internals.errors import (
     NoTokenError,
     OVPayError,
     SessionExpiredError,
+    TokenExpiredError,
 )
 from .internals.pagination import Paginator
 from .models import *
@@ -39,6 +40,7 @@ __all__ = [
     "SearchResult",
     "SearchSuggestions",
     "SessionExpiredError",
+    "TokenExpiredError",
     "TransitAccount",
     "TransitAccountProducts",
     "Trip",

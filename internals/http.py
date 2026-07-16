@@ -5,13 +5,20 @@ import base64
 import datetime
 import json
 import logging
+import os
 import pathlib
+from http.cookies import SimpleCookie
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 import aiohttp
 
-from .errors import InvalidCookieError, NoTokenError, SessionExpiredError
+from .errors import (
+    InvalidCookieError,
+    NoTokenError,
+    SessionExpiredError,
+    TokenExpiredError,
+)
 
 if TYPE_CHECKING:
     from ._types import SessionData
@@ -24,7 +31,10 @@ _logger = logging.getLogger("ovpay.http")
 QueryParams = dict[str, str | int]
 SESSION_URL = "https://www.ovpay.nl/api/auth/session"
 SESSION_COOKIE_NAME = "__Secure-next-auth.session-token"
-REFRESH_LEEWAY_SECONDS = 120
+# OVpay's NextAuth callback keeps returning the current access token until its
+# actual `exp` time. Refreshing minutes early therefore returns the same token
+# and must not be mistaken for a failed/expired session.
+REFRESH_LEEWAY_SECONDS = 0
 
 
 async def maybe_json(response: aiohttp.ClientResponse) -> Any:
@@ -49,10 +59,19 @@ class TokenManager:
     ) -> None:
         self._http: HTTPClient = http
         self._cookie: str | pathlib.Path | None = cookie
+        self._cookie_path: pathlib.Path | None = (
+            cookie if isinstance(cookie, pathlib.Path) else None
+        )
         self._token: str | None = token
         self._rewrite_cookie_file: bool = rewrite_cookie_file
         self._expires_at: datetime.datetime | None = None
         self._lock = asyncio.Lock()
+        if token:
+            jwt_exp = self._jwt_exp(token)
+            if jwt_exp is not None:
+                self._expires_at = datetime.datetime.fromtimestamp(
+                    jwt_exp, tz=datetime.UTC
+                )
 
     @staticmethod
     def normalize_cookie(cookie: str | pathlib.Path) -> str:
@@ -115,6 +134,37 @@ class TokenManager:
         return f"{SESSION_COOKIE_NAME}={raw}"
 
     @staticmethod
+    def _session_cookie_from_response(
+        response: aiohttp.ClientResponse,
+    ) -> str | None:
+        """Extract a rotated, possibly chunked NextAuth session cookie."""
+        chunks: list[tuple[int, str]] = []
+        for header in response.headers.getall("Set-Cookie", []):
+            parsed = SimpleCookie()
+            parsed.load(header)
+            for name, morsel in parsed.items():
+                if not name.startswith(SESSION_COOKIE_NAME) or not morsel.value:
+                    continue
+                suffix = name[len(SESSION_COOKIE_NAME) :].lstrip(".")
+                index = int(suffix) if suffix.isdigit() else -1
+                chunks.append((index, f"{name}={morsel.value}"))
+
+        if not chunks:
+            return None
+        chunks.sort(key=lambda item: item[0])
+        return "; ".join(value for _, value in chunks)
+
+    def _store_rotated_cookie(self, cookie_header: str) -> None:
+        """Use the latest session cookie and persist it when backed by a file."""
+        self._cookie = cookie_header
+        self._http._cookie = cookie_header
+
+        if self._cookie_path is not None:
+            temporary = self._cookie_path.with_name(f".{self._cookie_path.name}.tmp")
+            temporary.write_text(cookie_header, encoding="utf-8")
+            os.replace(temporary, self._cookie_path)
+
+    @staticmethod
     def _jwt_exp(token: str) -> int | None:
         """Return the JWT expiration timestamp, if it can be decoded."""
         try:
@@ -132,6 +182,12 @@ class TokenManager:
     def is_expired(self) -> bool:
         now = datetime.datetime.now(tz=datetime.UTC)
         return self.expires_at is not None and now >= self.expires_at - self.LEEWAY
+
+    @property
+    def is_actually_expired(self) -> bool:
+        """Whether the bearer token has passed its real JWT expiry."""
+        now = datetime.datetime.now(tz=datetime.UTC)
+        return self.expires_at is not None and now >= self.expires_at
 
     async def fetch_token(
         self,
@@ -160,6 +216,9 @@ class TokenManager:
         ) as response:
             response.raise_for_status()
             data: SessionData = await response.json()
+            rotated_cookie = self._session_cookie_from_response(response)
+            if rotated_cookie is not None:
+                self._store_rotated_cookie(rotated_cookie)
             token = data.get("token") or data.get("accessToken")
             error = data.get("error")
             # NextAuth surfaces refresh-flow failures (e.g. "RefreshTokenError")
@@ -206,7 +265,7 @@ class TokenManager:
         # returned here may already be expired. Accepting it just produces a
         # 401 on the next API call (and a refresh loop), so fail loudly with a
         # clear "re-login" message instead.
-        if self.is_expired:
+        if self.is_actually_expired:
             raise SessionExpiredError(
                 "OVpay session returned an already-expired access token; the "
                 "browser session can no longer be refreshed",
@@ -220,6 +279,14 @@ class TokenManager:
             raise NoTokenError(
                 "No bearer token is available. Provide a static token or a "
                 "valid browser session cookie when constructing the client."
+            )
+
+        if not self._cookie and self.is_actually_expired:
+            assert self._expires_at is not None
+            raise TokenExpiredError(
+                "Static OVpay bearer token expired at "
+                f"{self._expires_at.isoformat()}; replace the token or use a "
+                "browser session cookie for automatic refresh."
             )
 
         await self._refresh_if_needed()
@@ -273,12 +340,17 @@ class HTTPClient:
     def __init__(
         self,
         *,
-        token: str | None = None,
+        token: str | pathlib.Path | None = None,
         cookie: str | pathlib.Path | None = None,
         base_url: str | None = None,
         session: aiohttp.ClientSession | None = None,
         rewrite_cookie_file: bool = False,
     ) -> None:
+        if isinstance(token, pathlib.Path):
+            token_path = token
+            token = token_path.read_text(encoding="utf-8").strip()
+            if not token:
+                raise ValueError(f"Token file is empty: {token_path}")
         if not token and not cookie:
             raise ValueError("Must provide either a static token or a browser cookie.")
 

@@ -6,6 +6,7 @@ __all__ = (
     "NoTokenError",
     "OVPayError",
     "SessionExpiredError",
+    "TokenExpiredError",
 )
 
 RELOGIN_HINT = (
@@ -27,6 +28,10 @@ class AuthenticationError(OVPayError):
 
 class NoTokenError(AuthenticationError):
     """Raised when no bearer token or cookie is available to authenticate."""
+
+
+class TokenExpiredError(AuthenticationError):
+    """Raised when a static bearer token has passed its JWT expiry."""
 
 
 class InvalidCookieError(AuthenticationError):
