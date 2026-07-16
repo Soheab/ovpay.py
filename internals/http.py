@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Self
 import aiohttp
 
 from .errors import (
+    AuthenticationError,
     InvalidCookieError,
     NoTokenError,
     SessionExpiredError,
@@ -62,16 +63,20 @@ class TokenManager:
         self._cookie_path: pathlib.Path | None = (
             cookie if isinstance(cookie, pathlib.Path) else None
         )
+        self._static_token: str | None = token
+        self._static_expires_at: datetime.datetime | None = None
         self._token: str | None = token
+        self._using_cookie: bool = False
         self._rewrite_cookie_file: bool = rewrite_cookie_file
         self._expires_at: datetime.datetime | None = None
         self._lock = asyncio.Lock()
         if token:
             jwt_exp = self._jwt_exp(token)
             if jwt_exp is not None:
-                self._expires_at = datetime.datetime.fromtimestamp(
+                self._static_expires_at = datetime.datetime.fromtimestamp(
                     jwt_exp, tz=datetime.UTC
                 )
+                self._expires_at = self._static_expires_at
 
     @staticmethod
     def normalize_cookie(cookie: str | pathlib.Path) -> str:
@@ -189,6 +194,33 @@ class TokenManager:
         now = datetime.datetime.now(tz=datetime.UTC)
         return self.expires_at is not None and now >= self.expires_at
 
+    def _static_token_is_expired(self) -> bool:
+        return (
+            self._static_expires_at is not None
+            and datetime.datetime.now(tz=datetime.UTC) >= self._static_expires_at
+        )
+
+    def use_static_token(self) -> str:
+        """Activate the configured static token as an authentication fallback."""
+        if not self._static_token:
+            raise NoTokenError("No static bearer token is available as a fallback.")
+        if self._static_token_is_expired():
+            if self._static_expires_at is None:
+                raise TokenExpiredError(
+                    "Static OVpay bearer token has no expiry information; replace "
+                    "the token or restore the browser session cookie."
+                )
+            raise TokenExpiredError(
+                "Static OVpay bearer token expired at "
+                f"{self._static_expires_at.isoformat()}; replace the token or "
+                "restore the browser session cookie."
+            )
+        self._token = self._static_token
+        self._expires_at = self._static_expires_at
+        self._using_cookie = False
+        _logger.debug("Using static bearer token fallback")
+        return self._token
+
     async def fetch_token(
         self,
         cookie: str | pathlib.Path,
@@ -272,6 +304,7 @@ class TokenManager:
                 error=error,
             )
 
+        self._using_cookie = True
         return token
 
     async def get_token(self) -> str:
@@ -281,19 +314,19 @@ class TokenManager:
                 "valid browser session cookie when constructing the client."
             )
 
-        if not self._cookie and self.is_actually_expired:
-            assert self._expires_at is not None
-            raise TokenExpiredError(
-                "Static OVpay bearer token expired at "
-                f"{self._expires_at.isoformat()}; replace the token or use a "
-                "browser session cookie for automatic refresh."
-            )
+        if not self._using_cookie and self.is_actually_expired:
+            if self._cookie:
+                try:
+                    return await self.refresh()
+                except AuthenticationError:
+                    pass
+            return self.use_static_token()
 
         await self._refresh_if_needed()
         return self._token
 
     async def _refresh_if_needed(self) -> None:
-        if not self._cookie or self._expires_at is None:
+        if not self._using_cookie or not self._cookie or self._expires_at is None:
             return
 
         if not self.is_expired:
@@ -313,13 +346,35 @@ class TokenManager:
                 "provided. Construct the client with a cookie to enable refresh."
             )
 
-        self._token = await self.fetch_token(self._cookie)
-        return self._token
+        try:
+            self._token = await self.fetch_token(self._cookie)
+            self._using_cookie = True
+            return self._token
+        except AuthenticationError:
+            if self._static_token:
+                return self.use_static_token()
+            raise
 
     async def refresh(self) -> str:
         """Force a refresh of a cookie-backed bearer token."""
         async with self._lock:
             return await self._refresh()
+
+    async def fallback_after_rejection(self, rejected_token: str) -> str:
+        """Switch to the other configured credential after an API 401."""
+        if self._using_cookie and self._static_token:
+            fallback = self.use_static_token()
+        elif self._cookie:
+            fallback = await self._refresh()
+        else:
+            raise SessionExpiredError("OVpay API rejected the static bearer token")
+
+        if fallback == rejected_token:
+            raise SessionExpiredError(
+                "OVpay API rejected the bearer token and the fallback produced "
+                "the same token"
+            )
+        return fallback
 
 
 class HTTPClient:
@@ -428,7 +483,7 @@ class HTTPClient:
             ) as response:
                 # Retry a 401 once by forcing a token refresh — but only when a
                 # cookie can mint a new token, and only on the first attempt.
-                if response.status != 401 or attempt == 1 or not self._cookie:
+                if response.status != 401 or attempt == 1:
                     if response.status == 401:
                         raise SessionExpiredError(
                             f"OVpay API rejected the bearer token (401) for {url}"
@@ -437,7 +492,7 @@ class HTTPClient:
                     return await maybe_json(response)
 
             # Outside the response context: refresh and retry with a fresh token.
-            token = await self._auth.refresh()
+            token = await self._auth.fallback_after_rejection(token)
 
         raise RuntimeError("Unreachable authentication retry state.")
 
@@ -464,12 +519,12 @@ class HTTPClient:
                 **(extra_headers or {}),
             }
             async with session.post(url, headers=headers, json=json) as response:
-                if response.status != 401 or attempt == 1 or not self._cookie:
+                if response.status != 401 or attempt == 1:
                     if response.status == 401:
                         raise SessionExpiredError(
                             f"OVpay API rejected the bearer token (401) for {url}"
                         )
                     response.raise_for_status()
                     return await maybe_json(response)
-            token = await self._auth.refresh()
+            token = await self._auth.fallback_after_rejection(token)
         raise RuntimeError("Unreachable authentication retry state.")

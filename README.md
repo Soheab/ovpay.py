@@ -110,6 +110,18 @@ async with OVPayClient(token=Path("ovpay.token")) as client:
     cards = await client.get_transit_accounts()
 ```
 
+Provide both credentials for automatic fallback. The refreshable cookie is
+preferred; a still-valid static token is used if the cookie session fails.
+If the active token receives a 401, the client tries the other credential once.
+
+```python
+async with OVPayClient(
+    cookie=Path("cookies.txt"),
+    token=Path("ovpay.token"),
+) as client:
+    cards = await client.get_transit_accounts()
+```
+
 > [!CAUTION]
 > Never commit tokens or cookies to Git. Store them in an ignored file,
 > environment variable, or secret manager.

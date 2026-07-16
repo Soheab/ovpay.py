@@ -148,6 +148,13 @@ class OVPayClient:
         async with OVPayClient(cookie=pathlib.Path("cookies.txt")) as client:
             cards = await client.get_transit_accounts()
 
+    Cookie with a static-token fallback:
+        async with OVPayClient(
+            cookie=pathlib.Path("cookies.txt"),
+            token=pathlib.Path("ovpay.token"),
+        ) as client:
+            cards = await client.get_transit_accounts()
+
     Manual session lifecycle:
         client = OVPayClient(token="eyJ...")  # or cookie=pathlib.Path("cookies.txt")
         await client.start()
@@ -163,7 +170,9 @@ class OVPayClient:
         A bearer token (JWT) for the OVpay API. If provided, the client will use
         this token for authentication. The token expires after ~1 hour and will not
         be refreshed automatically. A pathlib.Path is read as a UTF-8 token file;
-        surrounding whitespace is removed.
+        surrounding whitespace is removed. When both `token` and `cookie` are
+        provided, the cookie is preferred and the static token is retained as a
+        fallback.
     cookie: :class:`str` | :class:`pathlib.Path` | :data:`None`
         A browser session cookie for the OVpay API. If provided, the client will
         use this cookie to fetch a bearer token and will refresh it automatically
