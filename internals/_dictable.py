@@ -37,6 +37,12 @@ class Dictable:
 
     Fields whose name starts with an underscore (e.g. internal client
     references) are omitted from the result.
+
+    Do not use ``dataclasses.asdict()`` on these models: it has no hook
+    that lets us filter out private fields or convert values the way
+    :meth:`to_dict` does, so it will include internal fields like
+    ``_client`` verbatim and skip our datetime formatting. Always use
+    :meth:`to_dict` instead.
     """
 
     def to_dict(self) -> dict[str, ToDictV]:
