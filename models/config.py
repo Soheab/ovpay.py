@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..internals._dictable import Dictable
+
 if TYPE_CHECKING:
     from ..internals._types import (
         AnonymousConfigData,
@@ -16,7 +18,7 @@ __all__ = (
 
 
 @dataclass
-class AnonymousConfig:
+class AnonymousConfig(Dictable):
     """Represents the public (unauthenticated) feature configuration.
 
     Attributes
@@ -43,7 +45,7 @@ class AnonymousConfig:
 
 
 @dataclass
-class WebConfig:
+class WebConfig(Dictable):
     """Represents the authenticated feature configuration.
 
     Attributes

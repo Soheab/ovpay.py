@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ..internals._dictable import Dictable
+
 if TYPE_CHECKING:
     from ..client import OVPayClient
     from ..internals._types import (
@@ -25,7 +27,7 @@ __all__ = (
 
 
 @dataclass
-class Personalization:
+class Personalization(Dictable):
     """Represents the personalization settings of a transit card.
 
     Attributes
@@ -53,7 +55,7 @@ class Personalization:
 
 
 @dataclass
-class PersonalAccountData:
+class PersonalAccountData(Dictable):
     """Represents the personal account status of a transit card.
 
     Attributes
@@ -73,7 +75,7 @@ class PersonalAccountData:
 
 
 @dataclass
-class TransitAccount:
+class TransitAccount(Dictable):
     """Represents an OVpay transit account (a card or payment method).
 
     Attributes
@@ -372,7 +374,7 @@ class TransitAccount:
 
 
 @dataclass
-class TransitAccountProducts:
+class TransitAccountProducts(Dictable):
     """Represents the products associated with a transit account.
 
     Attributes

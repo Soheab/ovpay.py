@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ..internals._dictable import Dictable
 from .transit_account import TransitAccount
 
 if TYPE_CHECKING:
@@ -20,7 +21,7 @@ __all__ = ("Location", "Trip", "TripDetails", "TripItem", "TripsPage")
 
 
 @dataclass
-class Location:
+class Location(Dictable):
     """Represents a check-in or check-out location.
 
     Attributes
@@ -51,7 +52,7 @@ class Location:
 
 
 @dataclass
-class Trip:
+class Trip(Dictable):
     """Represents a single public-transit trip.
 
     Attributes
@@ -151,7 +152,7 @@ class Trip:
 
 
 @dataclass
-class TripItem:
+class TripItem(Dictable):
     """Represents one row in a paginated trips response.
 
     Wraps a :class:`Trip` together with correction and discount metadata.
@@ -204,7 +205,7 @@ class TripItem:
 
 
 @dataclass
-class TripsPage:
+class TripsPage(Dictable):
     """Paginated trips response from GET /api/v3/Trips/{xtat}."""
 
     _client: OVPayClient
@@ -225,7 +226,7 @@ class TripsPage:
 
 
 @dataclass
-class TripDetails:
+class TripDetails(Dictable):
     """Full trip detail from GET /api/v3/Trips/{xbot}/{trip_id}."""
 
     _client: OVPayClient

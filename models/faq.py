@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from ..internals._dictable import Dictable
+
 if TYPE_CHECKING:
     from ..client import OVPayClient
     from ..internals._types import (
@@ -20,7 +22,7 @@ __all__ = (
 
 
 @dataclass
-class FaqTopic:
+class FaqTopic(Dictable):
     """Represents a FAQ topic.
 
     Attributes
@@ -62,7 +64,7 @@ class FaqTopic:
 
 
 @dataclass
-class FaqArticle:
+class FaqArticle(Dictable):
     """Represents a FAQ article.
 
     Attributes
@@ -107,7 +109,7 @@ class FaqArticle:
 
 
 @dataclass
-class FaqArticlesPage:
+class FaqArticlesPage(Dictable):
     """Represents a paginated list of FAQ articles.
 
     Attributes

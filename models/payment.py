@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from ..internals._dictable import Dictable
+
 if TYPE_CHECKING:
     from ..client import OVPayClient
     from ..internals._types import PaymentData, PaymentReceiptData, PaymentsPageData
@@ -12,7 +14,7 @@ __all__ = ("Payment", "PaymentReceipt", "PaymentsPage")
 
 
 @dataclass
-class Payment:
+class Payment(Dictable):
     """Represents a single payment associated with a transit card.
 
     Attributes
@@ -107,7 +109,7 @@ class Payment:
 
 
 @dataclass
-class PaymentsPage:
+class PaymentsPage(Dictable):
     """Represents a paginated list of payments.
 
     Attributes
@@ -140,7 +142,7 @@ class PaymentsPage:
 
 
 @dataclass
-class PaymentReceipt:
+class PaymentReceipt(Dictable):
     """Represents a payment receipt.
 
     Attributes

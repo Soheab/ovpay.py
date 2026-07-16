@@ -4,6 +4,8 @@ import datetime
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..internals._dictable import Dictable
+
 if TYPE_CHECKING:
     from ..internals._types import (
         AddressData,
@@ -21,7 +23,7 @@ __all__ = (
 
 
 @dataclass
-class CustomerAddress:
+class CustomerAddress(Dictable):
     """Represents a customer address.
 
     Attributes
@@ -63,7 +65,7 @@ class CustomerAddress:
 
 
 @dataclass
-class Customer:
+class Customer(Dictable):
     """Represents a customer.
 
     Contains personal details (name, email, address) for the authenticated user.
@@ -117,7 +119,7 @@ class Customer:
 
 
 @dataclass
-class Address:
+class Address(Dictable):
     """Represents a generic address.
 
     Attributes
@@ -159,7 +161,7 @@ class Address:
 
 
 @dataclass
-class PassengerAccount:
+class PassengerAccount(Dictable):
     """Represents a passenger account.
 
     Attributes

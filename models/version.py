@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..internals._dictable import Dictable
+
 if TYPE_CHECKING:
     from ..internals._types import ApiVersionData
 
@@ -10,7 +12,7 @@ __all__ = ("ApiVersion",)
 
 
 @dataclass
-class ApiVersion:
+class ApiVersion(Dictable):
     """Represents the API version.
 
     Attributes

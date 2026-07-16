@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ..internals._dictable import Dictable
+
 if TYPE_CHECKING:
     from ..internals._types import (
         SearchResponseData,
@@ -18,7 +20,7 @@ __all__ = (
 
 
 @dataclass
-class SearchResult:
+class SearchResult(Dictable):
     """Represents a single search result.
 
     Attributes
@@ -41,7 +43,7 @@ class SearchResult:
 
 
 @dataclass
-class SearchResponse:
+class SearchResponse(Dictable):
     """Represents a search response.
 
     Attributes
@@ -58,7 +60,7 @@ class SearchResponse:
 
 
 @dataclass
-class SearchSuggestions:
+class SearchSuggestions(Dictable):
     """Represents search suggestions.
 
     Attributes
