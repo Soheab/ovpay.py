@@ -313,3 +313,38 @@ class SessionData(TypedDict):
     provider: NotRequired[str]
     accessToken: NotRequired[str]
     error: NotRequired[str]
+
+
+# Decoded Keycloak RS256 access token payload (base64url JSON, middle segment of the JWT)
+# Sample: {
+#   "exp": <epoch seconds>,           ← token expiry
+#   "iat": <epoch seconds>,           ← issued-at
+#   "auth_time": <epoch seconds>,
+#   "jti": "onrtac:<uuid>",           ← token id
+#   "iss": "https://login.ovpay.nl/v1/realms/<redacted-realm>",
+#   "aud": ["realm-management", "account"],
+#   "sub": "<redacted-user-uuid>",
+#   "typ": "Bearer",
+#   "azp": "<redacted-client-id>",
+#   "sid": "<redacted-session-uuid>",
+#   "realm_access": {"roles": ["default-roles-translink"]},
+#   "resource_access": {
+#     "realm-management": {"roles": ["manage-users"]},
+#     "account": {"roles": ["manage-account", "manage-account-links"]}
+#   },
+#   "scope": "openid"
+# }
+class DecodedJWT(TypedDict):
+    exp: int  # epoch seconds
+    iat: int  # epoch seconds
+    auth_time: NotRequired[int]  # epoch seconds
+    jti: NotRequired[str]
+    sub: str
+    iss: str
+    aud: str | list[str]
+    typ: NotRequired[str]
+    azp: str
+    sid: NotRequired[str]
+    realm_access: NotRequired[dict[str, list[str]]]
+    resource_access: NotRequired[dict[str, dict[str, list[str]]]]
+    scope: str
