@@ -126,6 +126,35 @@ async with OVPayClient(
 > Never commit tokens or cookies to Git. Store them in an ignored file,
 > environment variable, or secret manager.
 
+### Keeping a long-lived client authenticated
+
+With a cookie, the bearer token is refreshed when a request finds it expired.
+That is all a short-lived script needs. A client that sits idle between
+requests — a poller, a bot, a long-running service — can instead refresh ahead
+of expiry in the background with `auto_refresh=True`:
+
+```python
+async with OVPayClient(cookie=Path("cookies.txt"), auto_refresh=True) as client:
+    ...
+```
+
+It requires a cookie (a static token cannot be refreshed) and is cancelled on
+`close()`. `start_background_refresh()` / `stop_background_refresh()` toggle it
+on an existing client.
+
+A browser session does not last forever. Once OVpay rejects it for good, the
+client stops trying to refresh and raises `SessionExpiredError` on every call
+rather than hammering the server. Recover by logging in again and handing over
+the new cookie — no need to rebuild the client:
+
+```python
+try:
+    trips = await client.get_trips(xtat)
+except SessionExpiredError:
+    client.replace_cookie(Path("cookies.txt"))  # freshly copied from the browser
+    trips = await client.get_trips(xtat)
+```
+
 ## Examples
 
 ### Fetch trips

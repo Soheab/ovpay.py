@@ -10,7 +10,7 @@ import pathlib
 from http.cookies import SimpleCookie
 from typing import TYPE_CHECKING, ClassVar, Self
 
-import aiohttp
+from curl_cffi.requests import RequestsError
 
 from .errors import (
     AuthenticationError,
@@ -21,6 +21,8 @@ from .errors import (
 )
 
 if TYPE_CHECKING:
+    from curl_cffi.requests import Response
+
     from ._types import DecodedJWT, SessionData
     from .http import HTTPClient
 
@@ -272,10 +274,10 @@ class CookieManager:
         return JWTToken.from_token(cookie_header.split("=", 1)[1])
 
     @staticmethod
-    def extract_rotated(response: aiohttp.ClientResponse) -> str | None:
+    def extract_rotated(response: Response) -> str | None:
         """Extract a rotated, possibly chunked NextAuth session cookie."""
         chunks: list[tuple[int, str]] = []
-        for header in response.headers.getall("Set-Cookie", []):
+        for header in response.headers.get_list("Set-Cookie"):
             parsed = SimpleCookie()
             parsed.load(header)
             for name, morsel in parsed.items():
@@ -334,6 +336,15 @@ class Authenticator:
 
         self._token_str: str | None = self._static_token
         self._token: JWTToken | None = self._static_jwt
+
+        # Set once the cookie-backed refresh has been permanently rejected by
+        # the server (SessionExpiredError), so repeated get_token()/refresh()
+        # calls fail fast instead of hammering /api/auth/session again with a
+        # cookie that's already known to be dead. Cleared by replace_cookie().
+        self._refresh_dead: SessionExpiredError | None = None
+
+        # Opt-in background refresh task; see start_background_refresh().
+        self._background_task: asyncio.Task[None] | None = None
 
     @property
     def token_expires_at(self) -> datetime.datetime | None:
@@ -444,40 +455,44 @@ class Authenticator:
         session = self._http._require_session()
         url = f"{self._http.base_url}/api/v1/PassengerAccounts"
         try:
-            async with session.get(
+            response = await session.get(
                 url, headers={"Authorization": f"Bearer {token}"}
-            ) as response:
-                return 200 <= response.status < 300
-        except aiohttp.ClientError:
+            )
+            return 200 <= response.status_code < 300
+        except RequestsError:
             return False
 
     async def _request_session(self, cookie_header: str) -> tuple[str, str | None]:
         """Hit the NextAuth session endpoint and return (token, error)."""
         session = self._http._require_session()
-        async with session.get(
+        response = await session.get(
             SESSION_URL,
             headers={
                 "Cookie": cookie_header,
                 "Accept": "application/json",
-                "User-Agent": "ovpay-wrapper/1.0",
+                # This endpoint is on www.ovpay.nl, unlike the api.ovpay.nl
+                # calls the session defaults are written for, so the origin
+                # and fetch metadata differ.
+                "Origin": None,  # type: ignore[dict-item]
+                "sec-fetch-site": "same-origin",
             },
-        ) as response:
-            response.raise_for_status()
-            data: SessionData = await response.json()
-            rotated_cookie = CookieManager.extract_rotated(response)
-            if rotated_cookie is not None and self._cookie_manager is not None:
-                self._cookie_manager.store_rotated(rotated_cookie)
-                self._http._cookie = rotated_cookie
-            token = data.get("token") or data.get("accessToken")
-            error = data.get("error")
-            # NextAuth surfaces refresh-flow failures (e.g. "RefreshTokenError")
-            # while still returning a usable access token until its own expiry.
-            # Only treat an error as fatal when no token came back with it.
-            if error and not token:
-                raise SessionExpiredError(
-                    "OVpay session could not provide a bearer token",
-                    error=error,
-                )
+        )
+        response.raise_for_status()
+        data: SessionData = response.json()
+        rotated_cookie = CookieManager.extract_rotated(response)
+        if rotated_cookie is not None and self._cookie_manager is not None:
+            self._cookie_manager.store_rotated(rotated_cookie)
+            self._http._cookie = rotated_cookie
+        token = data.get("token") or data.get("accessToken")
+        error = data.get("error")
+        # NextAuth surfaces refresh-flow failures (e.g. "RefreshTokenError")
+        # while still returning a usable access token until its own expiry.
+        # Only treat an error as fatal when no token came back with it.
+        if error and not token:
+            raise SessionExpiredError(
+                "OVpay session could not provide a bearer token",
+                error=error,
+            )
 
         if not token:
             # An empty object means NextAuth did not recognize the cookie as a
@@ -545,8 +560,18 @@ class Authenticator:
                 "provided. Construct the client with a cookie to enable refresh."
             )
 
+        if self._refresh_dead is not None:
+            if self._static_token:
+                return self.use_static_token()
+            raise self._refresh_dead
+
         try:
             return await self.fetch_token()
+        except SessionExpiredError as exc:
+            self._refresh_dead = exc
+            if self._static_token:
+                return self.use_static_token()
+            raise
         except AuthenticationError:
             if self._static_token:
                 return self.use_static_token()
@@ -556,6 +581,69 @@ class Authenticator:
         """Force a refresh of a cookie-backed bearer token."""
         async with self._lock:
             return await self._refresh()
+
+    def start_background_refresh(self, *, min_interval: float = 30.0) -> None:
+        """Opt-in: proactively refresh the cookie-backed token shortly before
+        it expires, so a client left idle stays authenticated (mirroring how
+        a real browser tab keeps its session warm) instead of only refreshing
+        reactively on the next get_token() call.
+
+        No-op if already running, if there's no cookie to refresh with, or if
+        the refresh is already known to be dead. Stop with
+        stop_background_refresh().
+        """
+        if self._background_task is not None or self._cookie_manager is None:
+            return
+        self._background_task = asyncio.create_task(
+            self._background_refresh_loop(min_interval)
+        )
+
+    def stop_background_refresh(self) -> None:
+        if self._background_task is not None:
+            self._background_task.cancel()
+            self._background_task = None
+
+    async def _background_refresh_loop(self, min_interval: float) -> None:
+        while True:
+            expires_at = self.token_expires_at
+            if expires_at is None or self._refresh_dead is not None:
+                return
+
+            now = datetime.datetime.now(tz=datetime.UTC)
+            sleep_for = max((expires_at - self.LEEWAY - now).total_seconds(), min_interval)
+            await asyncio.sleep(sleep_for)
+
+            try:
+                await self.refresh()
+            except SessionExpiredError:
+                _logger.debug(
+                    "Background refresh stopping: session permanently expired"
+                )
+                return
+            except AuthenticationError:
+                # Fell back to a static token (or no cookie manager left);
+                # nothing more for the background loop to do.
+                return
+
+    def replace_cookie(self, cookie: str | pathlib.Path) -> None:
+        """Swap in a new session cookie (e.g. pasted fresh from the browser
+        after SessionExpiredError), clearing any cached refresh failure."""
+        if self._cookie_manager is None:
+            self._cookie_manager = CookieManager(cookie)
+        else:
+            self._cookie_manager.replace_cookie(cookie)
+        self._refresh_dead = None
+
+        # A dead background loop exits on its own once _refresh_dead is set;
+        # restart it here so a fresh cookie keeps getting proactively refreshed.
+        if self._background_task is not None:
+            self.stop_background_refresh()
+            self.start_background_refresh()
+
+    def replace_token(self, token: str | pathlib.Path) -> None:
+        """Swap in a new static bearer token fallback."""
+        self._static_token, data = JWTToken.read(token)
+        self._static_jwt = JWTToken(data)
 
     async def fallback_after_rejection(self, rejected_token: str) -> str:
         """Switch to the other configured credential after an API 401."""

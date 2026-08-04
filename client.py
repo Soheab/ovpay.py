@@ -6,7 +6,7 @@ from datetime import date, datetime
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Self
 
-import aiohttp
+from curl_cffi.requests import AsyncSession
 
 from .internals.http import HTTPClient
 from .internals.pagination import Paginator
@@ -144,8 +144,15 @@ class OVPayClient:
         async with OVPayClient(token=pathlib.Path("ovpay.token")) as client:
             cards = await client.get_transit_accounts()
 
-    Browser cookie (auto-refreshes, lasts ~weeks):
+    Browser cookie (refreshes the token on demand, lasts ~weeks):
         async with OVPayClient(cookie=pathlib.Path("cookies.txt")) as client:
+            cards = await client.get_transit_accounts()
+
+    Long-lived / mostly idle client (refreshes ahead of expiry in the
+    background, rather than only when a request finds the token expired):
+        async with OVPayClient(
+            cookie=pathlib.Path("cookies.txt"), auto_refresh=True
+        ) as client:
             cards = await client.get_transit_accounts()
 
     Cookie with a static-token fallback:
@@ -180,8 +187,8 @@ class OVPayClient:
         containing the cookie value. You may paste a full browser cookie header;
         only the "__Secure-next-auth.session-token" cookie (incl. its .0/.1
         chunks) is kept.
-    session: :class:`aiohttp.ClientSession` | :data:`None`
-        An optional aiohttp.ClientSession to use for HTTP requests. If not provided,
+    session: :class:`curl_cffi.requests.AsyncSession` | :data:`None`
+        An optional curl_cffi AsyncSession to use for HTTP requests. If not provided,
         the client will create its own session and manage its lifecycle.
     rewrite_cookie_file: :class:`bool`
         When True and `cookie` is a file path, the file is rewritten in place
@@ -192,6 +199,14 @@ class OVPayClient:
         payments, and balance changes on a fixed interval. Defaults to False.
     poller_interval: :class:`float`
         The interval in seconds at which the poller fetches data. Defaults to 60.
+    auto_refresh: :class:`bool`
+        When True, :meth:`start` also starts a background task that refreshes
+        the bearer token just before it expires, keeping an otherwise idle
+        client authenticated instead of only refreshing on the next request.
+        Requires `cookie` (a static token cannot be refreshed) and raises
+        :exc:`ValueError` without one. The task stops itself if the session is
+        permanently rejected, and is cancelled by :meth:`close`. Defaults to
+        False. See :meth:`start_background_refresh` to enable it later.
     """
 
     # fmt: off
@@ -200,12 +215,18 @@ class OVPayClient:
         *,
         token: str | pathlib.Path | None = None,
         cookie: str | pathlib.Path | None = None,
-        session: aiohttp.ClientSession | None = None,
+        session: AsyncSession | None = None,
         rewrite_cookie_file: bool = False,
         enable_poller: bool = False,
         poller_interval: float = 60.0,
+        auto_refresh: bool = False,
     ) -> None:
     # fmt: on
+        if auto_refresh and not cookie:
+            raise ValueError(
+                "auto_refresh requires a session cookie to refresh with; a "
+                "static token alone cannot be refreshed."
+            )
         self._http = HTTPClient(
             token=token,
             cookie=cookie,
@@ -213,6 +234,7 @@ class OVPayClient:
             rewrite_cookie_file=rewrite_cookie_file,
         )
         self._poller: OVPayPoller | None = OVPayPoller(self, interval=poller_interval) if enable_poller else None
+        self._auto_refresh: bool = auto_refresh
 
     @property
     def poller_interval(self) -> float | None:
@@ -261,14 +283,52 @@ class OVPayClient:
 
         return decorator
 
+    def replace_cookie(self, cookie: str | pathlib.Path) -> None:
+        """Swap in a new session cookie without recreating the client.
+
+        Once a session is permanently rejected the client stops trying to
+        refresh it and every call raises :exc:`SessionExpiredError`, so this is
+        how you recover: log in again, then pass the fresh cookie here. It
+        clears that state and restarts the background refresher if it was
+        running. Accepts the same values as the `cookie` parameter.
+        """
+        self._http.replace_cookie(cookie)
+
+    def replace_token(self, token: str | pathlib.Path) -> None:
+        """Swap in a new static bearer token fallback without recreating the
+        client. Accepts the same values as the `token` parameter."""
+        self._http.replace_token(token)
+
+    def start_background_refresh(self, *, min_interval: float = 30.0) -> None:
+        """Start refreshing the token ahead of expiry in the background.
+
+        The same thing `auto_refresh=True` does at construction time; use this
+        to enable it later. Requires a cookie, and is a no-op if it is already
+        running. The task stops itself if the session is permanently rejected.
+
+        Parameters
+        ----------
+        min_interval: :class:`float`
+            Lower bound in seconds on the wait between refreshes, so a token
+            that is already expired (or nearly so) cannot cause a tight loop.
+            Defaults to 30.
+        """
+        self._http.start_background_refresh(min_interval=min_interval)
+
+    def stop_background_refresh(self) -> None:
+        """Cancel the background refresher. :meth:`close` does this too."""
+        self._http.stop_background_refresh()
+
     async def start(self) -> None:
-        """Starts the underlying aiohttp session and poller (if enabled)."""
+        """Starts the underlying HTTP session and poller (if enabled)."""
         await self._http.start()
+        if self._auto_refresh:
+            self._http.start_background_refresh()
         if self._poller:
             await self._poller.start()
 
     async def close(self) -> None:
-        """Closes the underlying aiohttp session and poller (if enabled).
+        """Closes the underlying HTTP session and poller (if enabled).
         
         This will not close the session provided by the user.
         """

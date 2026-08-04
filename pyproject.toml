@@ -9,16 +9,10 @@ description = "Unofficial async Python client for the OVpay API"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = [
-    "aiohttp>=3.9",
-]
+dependencies = ["curl_cffi>=0.16.0,<1"]
 
 [tool.setuptools]
-packages = [
-    "ovpay",
-    "ovpay.models",
-    "ovpay.internals",
-]
+packages = ["ovpay", "ovpay.models", "ovpay.internals"]
 package-dir = { ovpay = ".", "ovpay.models" = "models", "ovpay.internals" = "internals" }
 
 
@@ -27,3 +21,8 @@ pythonVersion = "3.12"
 typeCheckingMode = "strict"
 
 reportPrivateUsage = false
+
+[dependency-groups]
+lint = [
+    "ruff>=0.16.1",
+]
