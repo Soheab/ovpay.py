@@ -207,6 +207,13 @@ class OVPayClient:
         :exc:`ValueError` without one. The task stops itself if the session is
         permanently rejected, and is cancelled by :meth:`close`. Defaults to
         False. See :meth:`start_background_refresh` to enable it later.
+    transport_retry_attempts: :class:`int` | :data:`None`
+        Number of attempts made for a single request when it fails with a
+        transient transport-level error (e.g. a dropped TLS connection),
+        before the error is raised. Defaults to 3.
+    transport_retry_backoff: :class:`float` | :data:`None`
+        Base delay in seconds between transport retry attempts; the delay
+        increases linearly with each attempt. Defaults to 0.5.
     """
 
     # fmt: off
@@ -215,11 +222,13 @@ class OVPayClient:
         *,
         token: str | pathlib.Path | None = None,
         cookie: str | pathlib.Path | None = None,
-        session: AsyncSession | None = None,
+        session: AsyncSession[Any] | None = None,
         rewrite_cookie_file: bool = False,
         enable_poller: bool = False,
         poller_interval: float = 60.0,
         auto_refresh: bool = False,
+        transport_retry_attempts: int | None = None,
+        transport_retry_backoff: float | None = None,
     ) -> None:
     # fmt: on
         if auto_refresh and not cookie:
@@ -232,6 +241,8 @@ class OVPayClient:
             cookie=cookie,
             session=session,
             rewrite_cookie_file=rewrite_cookie_file,
+            transport_retry_attempts=transport_retry_attempts,
+            transport_retry_backoff=transport_retry_backoff,
         )
         self._poller: OVPayPoller | None = OVPayPoller(self, interval=poller_interval) if enable_poller else None
         self._auto_refresh: bool = auto_refresh

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import pathlib
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
+from curl_cffi.curl import CurlError
 from curl_cffi.requests import AsyncSession
 
 from .auth import Authenticator
@@ -14,12 +16,20 @@ from .errors import (
 
 if TYPE_CHECKING:
     from curl_cffi.requests import Response
+    from curl_cffi.requests.session import HttpMethod
 
 __all__ = ()
 
 _logger = logging.getLogger("ovpay.http")
 
 QueryParams = dict[str, str | int]
+
+# Transient TLS/connection failures (e.g. curl 35 "Connection closed
+# abruptly") happen occasionally on a long-lived session and are worth a
+# couple of quick retries before giving up. Overridable per-client via
+# HTTPClient(transport_retry_attempts=..., transport_retry_backoff=...).
+DEFAULT_TRANSPORT_RETRY_ATTEMPTS = 3
+DEFAULT_TRANSPORT_RETRY_BACKOFF = 0.5
 
 # Matches a real browser's TLS/HTTP2 fingerprint (JA3, ALPN, header order,
 # etc.) instead of aiohttp's, which is trivially distinguishable from
@@ -65,6 +75,8 @@ class HTTPClient:
         base_url: str | None = None,
         session: AsyncSession[Response] | None = None,
         rewrite_cookie_file: bool = False,
+        transport_retry_attempts: int | None = DEFAULT_TRANSPORT_RETRY_ATTEMPTS,
+        transport_retry_backoff: float| None  = DEFAULT_TRANSPORT_RETRY_BACKOFF,
     ) -> None:
         if not token and not cookie:
             raise ValueError("Must provide either a static token or a browser cookie.")
@@ -76,6 +88,16 @@ class HTTPClient:
         )
         self._session: AsyncSession[Response] | None = session
         self._session_owner: bool = session is None
+        self.transport_retry_attempts = (
+            transport_retry_attempts
+            if transport_retry_attempts is not None
+            else DEFAULT_TRANSPORT_RETRY_ATTEMPTS
+        )
+        self.transport_retry_backoff = (
+            transport_retry_backoff
+            if transport_retry_backoff is not None
+            else DEFAULT_TRANSPORT_RETRY_BACKOFF
+        )
 
     @property
     def is_open(self) -> bool:
@@ -134,6 +156,27 @@ class HTTPClient:
             )
         return self._session
 
+    async def _request_with_retry(
+        self, method: HttpMethod, url: str, **kwargs: Any
+    ) -> Response:
+        session = self._require_session()
+        attempts = self.transport_retry_attempts
+        for attempt in range(attempts):
+            try:
+                return await session.request(method, url, **kwargs)  # type: ignore
+            except CurlError:
+                if attempt == attempts - 1:
+                    raise
+                _logger.warning(
+                    "Transient error on %s %s (attempt %d/%d), retrying",
+                    method,
+                    url,
+                    attempt + 1,
+                    attempts,
+                )
+                await asyncio.sleep(self.transport_retry_backoff * (attempt + 1))
+        raise RuntimeError("Unreachable transport retry state.")
+
     async def get(
         self,
         path: str,
@@ -142,18 +185,19 @@ class HTTPClient:
         authenticated: bool = True,
         extra_headers: dict[str, str] | None = None,
     ) -> Any:
-        session = self._require_session()
         url = f"{self.base_url}/{path.lstrip('/')}"
 
         if not authenticated:
-            response = await session.get(url, params=params)
+            response = await self._request_with_retry("GET", url, params=params)
             response.raise_for_status()
             return maybe_json(response)
 
         token = await self._auth.get_token()
         for attempt in range(2):
             headers = {"Authorization": f"Bearer {token}", **(extra_headers or {})}
-            response = await session.get(url, headers=headers, params=params)
+            response = await self._request_with_retry(
+                "GET", url, headers=headers, params=params
+            )
             # Retry a 401 once by forcing a token refresh — but only when a
             # cookie can mint a new token, and only on the first attempt.
             if response.status_code != 401 or attempt == 1:
@@ -181,7 +225,6 @@ class HTTPClient:
         json: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
     ) -> object:
-        session = self._require_session()
         url = f"{self.base_url}/{path.lstrip('/')}"
         token = await self._auth.get_token()
         for attempt in range(2):
@@ -190,7 +233,9 @@ class HTTPClient:
                 "Content-Type": "application/json",
                 **(extra_headers or {}),
             }
-            response = await session.post(url, headers=headers, json=json)
+            response = await self._request_with_retry(
+                "POST", url, headers=headers, json=json
+            )
             if response.status_code != 401 or attempt == 1:
                 if response.status_code == 401:
                     raise SessionExpiredError(
