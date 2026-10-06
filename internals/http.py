@@ -53,11 +53,8 @@ class HTTPClient:
         "Accept-Language": "nl,en-US;q=0.9,en;q=0.8",
         "Origin": "https://www.ovpay.nl",
         "Referer": "https://www.ovpay.nl/mijn-ovpay/reisoverzicht",
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-        ),
-        "sec-ch-ua-platform": '"Windows"',
+        # No User-Agent / sec-ch-ua-platform here: the impersonation profile
+        # sends ones matching its TLS fingerprint and sec-ch-ua version.
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-site",
         "sec-fetch-dest": "empty",
