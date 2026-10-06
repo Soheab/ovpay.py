@@ -128,10 +128,14 @@ async with OVPayClient(
 
 ### Keeping a long-lived client authenticated
 
-With a cookie, the bearer token is refreshed when a request finds it expired.
-That is all a short-lived script needs. A client that sits idle between
-requests — a poller, a bot, a long-running service — can instead refresh ahead
-of expiry in the background with `auto_refresh=True`:
+With a cookie, the bearer token is refreshed when a request needs it. OVpay
+only issues a new token once the current one has expired, so a token within a
+couple of seconds of expiry isn't sent: the request waits for the new one
+instead of risking a 401 mid-flight. That is all a short-lived script needs.
+A client that sits idle between requests — a poller, a bot, a long-running
+service — can also rotate the token in the background the moment it expires
+with `auto_refresh=True`, which keeps the session warm and spares requests
+the refresh round-trip:
 
 ```python
 async with OVPayClient(cookie=Path("cookies.txt"), auto_refresh=True) as client:
@@ -140,7 +144,13 @@ async with OVPayClient(cookie=Path("cookies.txt"), auto_refresh=True) as client:
 
 It requires a cookie (a static token cannot be refreshed) and is cancelled on
 `close()`. `start_background_refresh()` / `stop_background_refresh()` toggle it
-on an existing client.
+on an existing client. Network errors and server hiccups are retried with
+backoff; it only stops (with a warning on the `ovpay.auth` logger) once the
+session is rejected for good, and `replace_cookie()` starts it again.
+
+When the cookie is given as a `Path`, the rotated session cookie OVpay sends
+back is written to that file, so a restarted client picks up where the last
+one left off.
 
 A browser session does not last forever. Once OVpay rejects it for good, the
 client stops trying to refresh and raises `SessionExpiredError` on every call
@@ -328,6 +338,7 @@ also be released under MPL 2.0. You may not republish it as your own.
 
 - Monetary values are in euro cents internally. Models expose `balance_euros`,
   `fare_euros`, and `amount_euros` convenience properties.
-- Cookie-backed clients refresh their access token automatically when it expires.
+- Cookie-backed clients refresh their access token automatically when it expires
+  (see [Keeping a long-lived client authenticated](#keeping-a-long-lived-client-authenticated)).
 - Static access tokens cannot be refreshed and expire in ~1 hour.
 - Always close the client — use `async with` or call `await client.close()`.

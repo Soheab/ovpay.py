@@ -192,9 +192,11 @@ class OVPayClient:
         An optional curl_cffi AsyncSession to use for HTTP requests. If not provided,
         the client will create its own session and manage its lifecycle.
     rewrite_cookie_file: :class:`bool`
-        When True and `cookie` is a file path, the file is rewritten in place
-        with just the extracted session cookie after the first successful
-        fetch. Defaults to False (the file is left untouched).
+        When True and `cookie` is a file path, a pasted full cookie header in
+        the file is replaced with just the extracted session cookie on first
+        read. Defaults to False. Independently of this, whenever OVpay rotates
+        the session cookie, the new one is written to the file so it survives
+        a restart.
     enable_poller: :class:`bool`
         When True, the client will start a background poller that fetches trips,
         payments, and balance changes on a fixed interval. Defaults to False.
