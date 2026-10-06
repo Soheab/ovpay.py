@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 from ..internals._dictable import Dictable
+from ..internals.pagination import Paginator
 
 if TYPE_CHECKING:
     from ..client import OVPayClient
@@ -14,9 +15,8 @@ if TYPE_CHECKING:
         PersonalizationData,
         TransitAccountData,
     )
-    from ..internals.pagination import Paginator
     from ..poller import Payment
-    from .trip import TripItem
+    from .trip import TripItem, TripsPage
 
 __all__ = (
     "PersonalAccountData",
@@ -323,8 +323,8 @@ class TransitAccount(Dictable):
 
     def export_trips(
         self,
-        from_date: datetime | str,
-        to_date: datetime | str,
+        from_date: date | datetime | str,
+        to_date: date | datetime | str,
         limit: int | None = None,
     ) -> Paginator[TripItem]:
         """Returns a paginator over every trip for this card, via the Trip Export API.
@@ -332,15 +332,19 @@ class TransitAccount(Dictable):
         Trips can be collected into a list, or iterated with ``async for`` to stream
         them page-by-page::
 
-            trips = await card.export_trips()
-            async for trip in card.export_trips():
+            trips = await card.export_trips("2026-01-01", "2026-01-31")
+            async for trip in card.export_trips("2026-01-01", "2026-01-31"):
                 ...
+
+        The export endpoint covers every card on the account, so the other
+        cards are excluded with :meth:`ExportQuery.exclude_transit_accounts`
+        (this costs one extra request to list them).
 
         Parameters
         ----------
-        from_date: datetime | str | None
+        from_date: date | datetime | str
             Range start, as an ISO string, ``date``, or ``datetime``.
-        to_date: datetime | str | None
+        to_date: date | datetime | str
             Range end, as an ISO string, ``date``, or ``datetime``.
         limit: int | None
             Maximum number of trips to return. ``None`` returns all.
@@ -349,7 +353,23 @@ class TransitAccount(Dictable):
             raise ValueError(
                 "TransitAccount.xtat is None. Cannot export trips for this card."
             )
-        return self._client.export_trips(self.xtat, from_date, to_date, limit=limit)
+
+        from ..client import ExportQuery  # circular at module level
+
+        xtat = self.xtat
+        client = self._client
+        query: ExportQuery | None = None
+
+        async def fetch_page(offset: int) -> TripsPage:
+            nonlocal query
+            if query is None:
+                cards = await client.get_transit_accounts()
+                query = ExportQuery(from_date, to_date).exclude_transit_accounts(
+                    *(card.xtat for card in cards if card.xtat and card.xtat != xtat)
+                )
+            return await client._export_trips(query, offset=offset)
+
+        return Paginator(fetch_page, limit=limit)
 
     def get_payments(self, limit: int | None = None) -> Paginator[Payment]:
         """Returns a paginator over every payment for this transit card.
