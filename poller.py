@@ -40,7 +40,9 @@ class OVPayPoller:
             async def on_balance(card: TransitAccount, old: int, new: int) -> None:
                 print(f"{card.name}: {old/100:.2f} → {new/100:.2f}")
 
-            await poller.start()   # runs until cancelled
+            await poller.start()   # seeds, then polls in a background task
+            ...
+            poller.stop()
 
     The poller fetches all cards on every cycle, then for each card
     fetches all trips and payments. stop() cancels the background task cleanly.
@@ -98,19 +100,28 @@ class OVPayPoller:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def start(self) -> None:
-        """Run the polling loop until cancelled or stop() is called.
+    @property
+    def is_running(self) -> bool:
+        """:class:`bool`: Whether the background polling task is running."""
+        return self._task is not None and not self._task.done()
 
-        Performs an initial seeding poll (no callbacks fired) then fires
-        callbacks only for changes detected in subsequent polls.
+    async def start(self) -> None:
+        """Seed the poller and start polling in a background task.
+
+        Performs an initial seeding poll (no callbacks fired), then returns;
+        callbacks fire only for changes detected in subsequent polls, until
+        :meth:`stop` is called. No-op if already running.
         """
+        if self.is_running:
+            return
         await self._seed()
-        self._task = asyncio.create_task(self._loop())
+        self._task = asyncio.create_task(self._loop(), name="ovpay-poller")
 
     def stop(self) -> None:
         """Cancel the background polling task."""
         if self._task and not self._task.done():
             self._task.cancel()
+        self._task = None
 
     # ------------------------------------------------------------------
     # Internal
