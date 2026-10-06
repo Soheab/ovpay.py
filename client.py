@@ -333,10 +333,16 @@ class OVPayClient:
     async def start(self) -> None:
         """Starts the underlying HTTP session and poller (if enabled)."""
         await self._http.start()
-        if self._auto_refresh:
-            self._http.start_background_refresh()
-        if self._poller:
-            await self._poller.start()
+        try:
+            if self._auto_refresh:
+                self._http.start_background_refresh()
+            if self._poller:
+                await self._poller.start()
+        except BaseException:
+            # __aexit__ doesn't run when __aenter__ raises, so don't leak the
+            # session or the background refresh task.
+            await self.close()
+            raise
 
     async def close(self) -> None:
         """Closes the underlying HTTP session and poller (if enabled).

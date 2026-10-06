@@ -88,6 +88,9 @@ class HTTPClient:
         )
         self._session: AsyncSession[Response] | None = session
         self._session_owner: bool = session is None
+        # Tracked separately from `_session`: a user-supplied session exists
+        # before start() runs, but the initial token still has to be fetched.
+        self._started: bool = False
         self.transport_retry_attempts = (
             transport_retry_attempts
             if transport_retry_attempts is not None
@@ -101,18 +104,25 @@ class HTTPClient:
 
     @property
     def is_open(self) -> bool:
-        return self._session is not None
+        return self._started and self._session is not None
 
     async def start(self) -> None:
-        if self.is_open:
+        if self._started:
             return
 
-        self._session = self._session or AsyncSession(
-            headers=self.DEFAULT_HEADERS, impersonate=IMPERSONATE
-        )
-        if self._cookie:
-            _logger.debug("Fetching initial bearer token from cookie")
-            await self._auth._refresh()
+        if self._session is None:
+            self._session = AsyncSession(
+                headers=self.DEFAULT_HEADERS, impersonate=IMPERSONATE
+            )
+        self._started = True
+        try:
+            if self._cookie:
+                _logger.debug("Fetching initial bearer token from cookie")
+                await self._auth.refresh()
+        except BaseException:
+            # Leave the client restartable instead of half-open with no token.
+            await self.close()
+            raise
 
     def replace_cookie(self, cookie: str | pathlib.Path) -> None:
         """Swap in a new session cookie without recreating the client."""
@@ -133,6 +143,7 @@ class HTTPClient:
 
     async def close(self) -> None:
         self._auth.stop_background_refresh()
+        self._started = False
         if self._session and self._session_owner:
             await self._session.close()
             self._session = None
