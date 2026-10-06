@@ -701,12 +701,20 @@ class Authenticator:
 
     async def fallback_after_rejection(self, rejected_token: str) -> str:
         """Switch to the other configured credential after an API 401."""
-        if self._using_cookie and self._static_token:
-            fallback = self.use_static_token()
-        elif self._cookie_manager is not None:
-            fallback = await self._refresh()
-        else:
-            raise SessionExpiredError("OVpay API rejected the static bearer token")
+        async with self._lock:
+            # Another request (or the background loop) may have replaced the
+            # token while this one was in flight; just use the new one rather
+            # than refreshing again with a cookie whose refresh token might
+            # already have been rotated.
+            if self._token_str is not None and self._token_str != rejected_token:
+                return self._token_str
+
+            if self._using_cookie and self._static_token:
+                fallback = self.use_static_token()
+            elif self._cookie_manager is not None:
+                fallback = await self._refresh()
+            else:
+                raise SessionExpiredError("OVpay API rejected the static bearer token")
 
         if fallback == rejected_token:
             raise SessionExpiredError(
