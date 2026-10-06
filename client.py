@@ -148,8 +148,8 @@ class OVPayClient:
         async with OVPayClient(cookie=pathlib.Path("cookies.txt")) as client:
             cards = await client.get_transit_accounts()
 
-    Long-lived / mostly idle client (refreshes ahead of expiry in the
-    background, rather than only when a request finds the token expired):
+    Long-lived / mostly idle client (rotates the token in the background the
+    moment it expires, rather than when the next request needs it):
         async with OVPayClient(
             cookie=pathlib.Path("cookies.txt"), auto_refresh=True
         ) as client:
@@ -200,9 +200,12 @@ class OVPayClient:
     poller_interval: :class:`float`
         The interval in seconds at which the poller fetches data. Defaults to 60.
     auto_refresh: :class:`bool`
-        When True, :meth:`start` also starts a background task that refreshes
-        the bearer token just before it expires, keeping an otherwise idle
-        client authenticated instead of only refreshing on the next request.
+        When True, :meth:`start` also starts a background task that rotates
+        the bearer token as soon as it expires, keeping an otherwise idle
+        client authenticated and sparing requests the refresh round-trip.
+        OVpay won't issue a new token before the current one expires, so
+        the token is never replaced early; with or without this option, a
+        token within a few seconds of expiry is not sent with new requests.
         Requires `cookie` (a static token cannot be refreshed) and raises
         :exc:`ValueError` without one. The task stops itself if the session is
         permanently rejected, and is cancelled by :meth:`close`. Defaults to
@@ -311,7 +314,7 @@ class OVPayClient:
         self._http.replace_token(token)
 
     def start_background_refresh(self, *, min_interval: float = 30.0) -> None:
-        """Start refreshing the token ahead of expiry in the background.
+        """Start rotating the token in the background as soon as it expires.
 
         The same thing `auto_refresh=True` does at construction time; use this
         to enable it later. Requires a cookie, and is a no-op if it is already
@@ -320,9 +323,9 @@ class OVPayClient:
         Parameters
         ----------
         min_interval: :class:`float`
-            Lower bound in seconds on the wait between refreshes, so a token
-            that is already expired (or nearly so) cannot cause a tight loop.
-            Defaults to 30.
+            Base delay in seconds before retrying after a failed or
+            unproductive refresh attempt. Doubles with each consecutive
+            failure, up to 5 minutes. Defaults to 30.
         """
         self._http.start_background_refresh(min_interval=min_interval)
 

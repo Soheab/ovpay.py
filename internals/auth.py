@@ -29,9 +29,18 @@ if TYPE_CHECKING:
 
 SESSION_COOKIE_NAME = "__Secure-next-auth.session-token"
 # OVpay's NextAuth callback keeps returning the current access token until its
-# actual `exp` time. Refreshing minutes early therefore returns the same token
-# and must not be mistaken for a failed/expired session.
-REFRESH_LEEWAY_SECONDS = 0
+# actual `exp` time (by its own clock), so a new token can't be obtained early.
+# Instead, a token with less than EXPIRY_MARGIN_SECONDS left is no longer sent
+# with new requests (it could expire in flight and come back as a 401): the
+# client waits until EXPIRY_SKEW_SECONDS past `exp` and rotates it then. If
+# NextAuth still hands back the old token (its clock lags ours), it is asked
+# again after each of ROTATION_RETRY_DELAYS.
+EXPIRY_MARGIN_SECONDS = 2.0
+EXPIRY_SKEW_SECONDS = 1.0
+ROTATION_RETRY_DELAYS = (1.0, 2.0, 4.0)
+# After a 401, how close to expiry the rejected token may be for it to count as
+# "expired by the API's clock" and be worth waiting out, rather than rejected.
+REJECTED_EXPIRY_WINDOW_SECONDS = 10.0
 SESSION_URL = "https://www.ovpay.nl/api/auth/session"
 
 _logger = logging.getLogger("ovpay.auth")
@@ -305,8 +314,9 @@ class CookieManager:
 
 class Authenticator:
     LEEWAY: ClassVar[datetime.timedelta] = datetime.timedelta(
-        seconds=REFRESH_LEEWAY_SECONDS
+        seconds=EXPIRY_MARGIN_SECONDS
     )
+    SKEW: ClassVar[datetime.timedelta] = datetime.timedelta(seconds=EXPIRY_SKEW_SECONDS)
 
     def __init__(
         self,
@@ -369,6 +379,7 @@ class Authenticator:
 
     @property
     def is_expired(self) -> bool:
+        """Whether the bearer token is expired or too close to expiry to use."""
         now = datetime.datetime.now(tz=datetime.UTC)
         expires_at = self.token_expires_at
         return expires_at is not None and now >= expires_at - self.LEEWAY
@@ -563,10 +574,48 @@ class Authenticator:
             return
 
         async with self._lock:
-            if not self.is_expired:
+            # Re-check: whoever held the lock may already have rotated it.
+            if not self._using_cookie or not self.is_expired:
                 return
 
-            await self._refresh()
+            await self._rotate()
+
+    async def _rotate(self, *, max_wait: float | None = None) -> str:
+        """Replace an expiring cookie-backed token with a newly minted one.
+
+        Must be called with the lock held. NextAuth returns the current token
+        until it is past `exp`, so asking any earlier just gets the same token
+        back: wait until just after expiry, then refresh, and ask again a few
+        times if NextAuth's clock lags behind ours and it still hasn't rotated.
+        """
+        old_token = self._token_str
+        expires_at = self.token_expires_at
+        if self._using_cookie and expires_at is not None:
+            now = datetime.datetime.now(tz=datetime.UTC)
+            wait = (expires_at + self.SKEW - now).total_seconds()
+            # Only wait out the last few seconds; a token further from expiry
+            # is being force-refreshed and the caller wants an answer now.
+            if max_wait is None:
+                max_wait = (self.LEEWAY + self.SKEW).total_seconds()
+            if 0 < wait <= max_wait:
+                _logger.debug("Waiting %.2fs for the token to expire", wait)
+                await asyncio.sleep(wait)
+
+        token = await self._refresh()
+        for delay in ROTATION_RETRY_DELAYS:
+            if (
+                token != old_token
+                or not self._using_cookie
+                or not self.is_actually_expired
+            ):
+                break
+            _logger.debug(
+                "Session endpoint returned the expired token again; retrying in %.1fs",
+                delay,
+            )
+            await asyncio.sleep(delay)
+            token = await self._refresh()
+        return token
 
     async def _refresh(self) -> str:
         _logger.debug("Refreshing bearer token (expired=%s)", self.is_expired)
@@ -599,10 +648,14 @@ class Authenticator:
             return await self._refresh()
 
     def start_background_refresh(self, *, min_interval: float = 30.0) -> None:
-        """Opt-in: proactively refresh the cookie-backed token shortly before
-        it expires, so a client left idle stays authenticated (mirroring how
-        a real browser tab keeps its session warm) instead of only refreshing
-        reactively on the next get_token() call.
+        """Opt-in: rotate the cookie-backed token as soon as it expires, so a
+        client left idle stays authenticated (mirroring how a real browser
+        tab keeps its session warm) and requests never have to wait for a
+        refresh, instead of only refreshing on the next get_token() call.
+
+        `min_interval` is the base delay before retrying after a failed or
+        unproductive attempt; it doubles per consecutive failure, up to 5
+        minutes.
 
         No-op if already running or if there's no cookie to refresh with. A
         loop that has already stopped (e.g. after SessionExpiredError) is
@@ -644,14 +697,21 @@ class Authenticator:
                 # Exponential backoff after errors, capped at 5 minutes.
                 sleep_for = min(min_interval * 2 ** (failures - 1), 300.0)
             else:
+                # Wake as the token enters the expiry margin: from then on
+                # requests wait for a new token, which _rotate() fetches the
+                # moment NextAuth is willing to mint one.
                 now = datetime.datetime.now(tz=datetime.UTC)
-                sleep_for = max(
-                    (expires_at - self.LEEWAY - now).total_seconds(), min_interval
-                )
+                sleep_for = max((expires_at - self.LEEWAY - now).total_seconds(), 0.0)
             await asyncio.sleep(sleep_for)
 
+            before = self._token_str
             try:
-                await self.refresh()
+                if self._using_cookie:
+                    await self._refresh_if_needed()
+                elif self.is_expired:
+                    # Running on the static fallback, which is about to run
+                    # out; try to get back onto the cookie.
+                    await self.refresh()
             except SessionExpiredError:
                 _logger.warning(
                     "Background refresh stopping: session permanently expired; "
@@ -677,7 +737,17 @@ class Authenticator:
                     exc_info=True,
                 )
             else:
-                failures = 0
+                if self._token_str == before and self.is_expired:
+                    # No error, but no new token either (e.g. NextAuth kept
+                    # returning the old one): back off instead of spinning.
+                    failures += 1
+                    _logger.warning(
+                        "Background refresh did not obtain a new token "
+                        "(attempt %d), retrying",
+                        failures,
+                    )
+                else:
+                    failures = 0
 
     def replace_cookie(self, cookie: str | pathlib.Path) -> None:
         """Swap in a new session cookie (e.g. pasted fresh from the browser
@@ -712,7 +782,12 @@ class Authenticator:
             if self._using_cookie and self._static_token:
                 fallback = self.use_static_token()
             elif self._cookie_manager is not None:
-                fallback = await self._refresh()
+                # A token rejected right around its expiry (the API's clock
+                # can be slightly ahead of ours) needs a rotation, not just a
+                # re-fetch, or NextAuth hands the same token back.
+                fallback = await self._rotate(
+                    max_wait=REJECTED_EXPIRY_WINDOW_SECONDS + EXPIRY_SKEW_SECONDS
+                )
             else:
                 raise SessionExpiredError("OVpay API rejected the static bearer token")
 
