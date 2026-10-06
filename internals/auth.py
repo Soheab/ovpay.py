@@ -80,22 +80,29 @@ class JWTToken:
         return token, cls.decode(token)
 
     def _update(self, data: DecodedJWT) -> None:
+        if not isinstance(data.get("exp"), int):  # pyright: ignore[reportUnnecessaryIsInstance]
+            raise InvalidCookieError(
+                "The bearer token has no valid `exp` claim, so its expiry "
+                "can't be tracked."
+            )
         self._data = data
         self._expires: int = data["exp"]
-        self._issued_at: int = data["iat"]
+        self._issued_at: int = data.get("iat", data["exp"])
         self._auth_time: int | None = data.get("auth_time")
         self._id: str | None = data.get("jti")
         self._sub: str | None = data.get("sub")
-        self._iss: str = data["iss"]
-        self._aud: str | list[str] = data["aud"]
+        # Only `exp` matters for refreshing; don't fail on a token that lacks
+        # claims this wrapper merely exposes.
+        self._iss: str = data.get("iss", "")
+        self._aud: str | list[str] = data.get("aud", [])
         self._typ: str | None = data.get("typ")
-        self._azp: str = data["azp"]
+        self._azp: str = data.get("azp", "")
         self._sid: str | None = data.get("sid")
         self._realm_access: dict[str, list[str]] | None = data.get("realm_access")
         self._resource_access: dict[str, dict[str, list[str]]] | None = data.get(
             "resource_access"
         )
-        self._scope: str = data["scope"]
+        self._scope: str = data.get("scope", "")
 
     def replace_token(self, token: str) -> None:
         token_data = JWTToken.decode(token)
