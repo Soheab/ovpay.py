@@ -188,6 +188,53 @@ class HTTPClient:
                 await asyncio.sleep(self.transport_retry_backoff * (attempt + 1))
         raise RuntimeError("Unreachable transport retry state.")
 
+    async def request(
+        self,
+        method: HttpMethod,
+        path: str,
+        *,
+        params: QueryParams | None = None,
+        json: dict[str, Any] | None = None,
+        authenticated: bool = True,
+        extra_headers: dict[str, str] | None = None,
+    ) -> Response:
+        """Perform a request and return the raw, successful response.
+
+        Authenticated requests carry the bearer token and are retried once
+        with the fallback credential (or a rotated token) on a 401.
+        """
+        url = f"{self.base_url}/{path.lstrip('/')}"
+        kwargs: dict[str, Any] = {"params": params}
+        if json is not None:
+            kwargs["json"] = json
+
+        if not authenticated:
+            response = await self._request_with_retry(
+                method, url, headers=extra_headers or {}, **kwargs
+            )
+            response.raise_for_status()
+            return response
+
+        token = await self._auth.get_token()
+        for attempt in range(2):
+            headers = {"Authorization": f"Bearer {token}", **(extra_headers or {})}
+            response = await self._request_with_retry(
+                method, url, headers=headers, **kwargs
+            )
+            # Retry a 401 once with the other credential / a new token, and
+            # only on the first attempt.
+            if response.status_code != 401 or attempt == 1:
+                if response.status_code == 401:
+                    raise SessionExpiredError(
+                        f"OVpay API rejected the bearer token (401) for {url}"
+                    )
+                response.raise_for_status()
+                return response
+
+            token = await self._auth.fallback_after_rejection(token)
+
+        raise RuntimeError("Unreachable authentication retry state.")
+
     async def get(
         self,
         path: str,
@@ -196,32 +243,14 @@ class HTTPClient:
         authenticated: bool = True,
         extra_headers: dict[str, str] | None = None,
     ) -> Any:
-        url = f"{self.base_url}/{path.lstrip('/')}"
-
-        if not authenticated:
-            response = await self._request_with_retry("GET", url, params=params)
-            response.raise_for_status()
-            return maybe_json(response)
-
-        token = await self._auth.get_token()
-        for attempt in range(2):
-            headers = {"Authorization": f"Bearer {token}", **(extra_headers or {})}
-            response = await self._request_with_retry(
-                "GET", url, headers=headers, params=params
-            )
-            # Retry a 401 once by forcing a token refresh — but only when a
-            # cookie can mint a new token, and only on the first attempt.
-            if response.status_code != 401 or attempt == 1:
-                if response.status_code == 401:
-                    raise SessionExpiredError(
-                        f"OVpay API rejected the bearer token (401) for {url}"
-                    )
-                response.raise_for_status()
-                return maybe_json(response)
-
-            token = await self._auth.fallback_after_rejection(token)
-
-        raise RuntimeError("Unreachable authentication retry state.")
+        response = await self.request(
+            "GET",
+            path,
+            params=params,
+            authenticated=authenticated,
+            extra_headers=extra_headers,
+        )
+        return maybe_json(response)
 
     async def get_anonymous(
         self, path: str, *, params: QueryParams | None = None
@@ -235,24 +264,8 @@ class HTTPClient:
         *,
         json: dict[str, Any] | None = None,
         extra_headers: dict[str, str] | None = None,
-    ) -> object:
-        url = f"{self.base_url}/{path.lstrip('/')}"
-        token = await self._auth.get_token()
-        for attempt in range(2):
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                **(extra_headers or {}),
-            }
-            response = await self._request_with_retry(
-                "POST", url, headers=headers, json=json
-            )
-            if response.status_code != 401 or attempt == 1:
-                if response.status_code == 401:
-                    raise SessionExpiredError(
-                        f"OVpay API rejected the bearer token (401) for {url}"
-                    )
-                response.raise_for_status()
-                return maybe_json(response)
-            token = await self._auth.fallback_after_rejection(token)
-        raise RuntimeError("Unreachable authentication retry state.")
+    ) -> Any:
+        response = await self.request(
+            "POST", path, json=json, extra_headers=extra_headers
+        )
+        return maybe_json(response)

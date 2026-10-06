@@ -1056,18 +1056,13 @@ class OVPayClient:
         return await self._download_export("/api/v2/TripExport/download/csv", query)
 
     async def _download_export(self, path: str, query: ExportQuery) -> bytes:
-        token = await self._http._auth.get_token()
-        url = f"{self._http.base_url}/{path.lstrip('/')}"
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "Referer": "https://www.ovpay.nl/",
-        }
-        async with self._http._require_session().post(
-            url, headers=headers, json=query._to_body()
-        ) as response:
-            response.raise_for_status()
-            return await response.read()
+        response = await self._http.request(
+            "POST",
+            path,
+            json=query._to_body(),
+            extra_headers={"Referer": "https://www.ovpay.nl/"},
+        )
+        return response.content
 
     async def get_photo_upload_status(self, reference_id: str) -> str:
         """Return the processing status of a previously uploaded photo.
@@ -1085,13 +1080,10 @@ class OVPayClient:
         :class:`str`
             Current processing status of the uploaded photo.
         """
-        token = await self._http._auth.get_token()
-        url = f"{self._http.base_url}/api/v1/Photo/upload-status/{reference_id}"
-        async with self._http._require_session().get(
-            url, headers={"Authorization": f"Bearer {token}"}
-        ) as response:
-            response.raise_for_status()
-            return await response.text()
+        response = await self._http.request(
+            "GET", f"/api/v1/Photo/upload-status/{reference_id}"
+        )
+        return response.text
 
     async def lookup_address_anonymously(
         self, postal_code: str, house_number: str
