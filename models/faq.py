@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from ..client import OVPayClient
     from ..internals._types import (
         FaqArticleData,
+        FaqArticleEditionData,
         FaqArticlesPageData,
         FaqTopicData,
     )
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 
 __all__ = (
     "FaqArticle",
+    "FaqArticleEdition",
     "FaqArticlesPage",
     "FaqTopic",
 )
@@ -64,6 +66,28 @@ class FaqTopic(Dictable):
 
 
 @dataclass
+class FaqArticleEdition(Dictable):
+    """Represents one edition of a FAQ article.
+
+    An article can be published in several editions, one per audience.
+
+    Attributes
+    ----------
+    edition_type: :class:`str`
+        The audience of this edition, e.g. ``"Customer"`` or ``"OV_pas"``.
+    edition_id: :class:`str`
+        The identifier of this edition, e.g. ``"OVPY-64517"``.
+    """
+
+    edition_type: str
+    edition_id: str
+
+    @classmethod
+    def from_dict(cls, d: FaqArticleEditionData) -> FaqArticleEdition:
+        return cls(edition_type=d["editionType"], edition_id=d["editionId"])
+
+
+@dataclass
 class FaqArticle(Dictable):
     """Represents a FAQ article.
 
@@ -78,6 +102,9 @@ class FaqArticle(Dictable):
     content: :class:`str` | :data:`None`
         The full HTML/text content of the article. ``None`` when the article was
         returned as part of a listing — call :meth:`get_details` to populate it.
+    editions: :class:`list`[:class:`FaqArticleEdition`]
+        The editions this article is published in. Empty when the article was
+        returned as part of a listing — call :meth:`get_details` to populate it.
     """
 
     _client: OVPayClient
@@ -85,6 +112,7 @@ class FaqArticle(Dictable):
     title: str
     topic_id: str | None
     content: str | None
+    editions: list[FaqArticleEdition] = field(default_factory=list[FaqArticleEdition])
 
     @classmethod
     def from_dict(cls, client: OVPayClient, d: FaqArticleData) -> FaqArticle:
@@ -94,6 +122,7 @@ class FaqArticle(Dictable):
             title=d["title"],
             topic_id=d.get("topicId"),
             content=d.get("content"),
+            editions=[FaqArticleEdition.from_dict(e) for e in d.get("editions", [])],
         )
 
     async def get_details(self) -> FaqArticle:

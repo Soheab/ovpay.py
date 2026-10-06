@@ -249,11 +249,17 @@ class FaqTopicData(TypedDict):
 
 
 # GET /api/anonymous/v1/faq/articles?topicId=<id>
+class FaqArticleEditionData(TypedDict):
+    editionType: str
+    editionId: str
+
+
 class FaqArticleData(TypedDict):
     id: str
     title: str
     topicId: NotRequired[str]
     content: NotRequired[str]
+    editions: NotRequired[list[FaqArticleEditionData]]
 
 
 class FaqArticlesPageData(TypedDict):

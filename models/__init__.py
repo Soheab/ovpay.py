@@ -15,6 +15,7 @@ __all__ = (
     "Customer",
     "CustomerAddress",
     "FaqArticle",
+    "FaqArticleEdition",
     "FaqArticlesPage",
     "FaqTopic",
     "Location",

@@ -20,6 +20,7 @@ __all__ = [
     "CustomerAddress",
     "ExportQuery",
     "FaqArticle",
+    "FaqArticleEdition",
     "FaqArticlesPage",
     "FaqTopic",
     "InvalidCookieError",
