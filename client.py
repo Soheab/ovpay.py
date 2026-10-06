@@ -863,7 +863,8 @@ class OVPayClient:
         raw: FaqArticleData = await self._http.get_anonymous(
             f"/api/anonymous/v1/faq/articles/{article_id}"
         )
-        return FaqArticle.from_dict(self, raw)
+        # The single-article response has no id field; it's the one we asked for.
+        return FaqArticle.from_dict(self, {**raw, "id": raw.get("id", article_id)})
 
     async def search(
         self, query: str, *, limit: int | None = None, language: str = "nl"
