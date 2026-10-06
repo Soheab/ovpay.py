@@ -461,11 +461,28 @@ class Authenticator:
         except RequestsError:
             return False
 
+    def _purge_jar_session_cookies(self) -> None:
+        """Drop any session-token cookies from the HTTP session's cookie jar."""
+        cookies = getattr(self._http._require_session(), "cookies", None)
+        jar = getattr(cookies, "jar", None)
+        if jar is None:
+            return
+        for cookie in list(jar):
+            if cookie.name.startswith(SESSION_COOKIE_NAME):
+                jar.clear(cookie.domain, cookie.path, cookie.name)
+
     async def _request_session(self, cookie_header: str) -> tuple[str, str | None]:
         """Hit the NextAuth session endpoint and return (token, error)."""
+        # The session cookie is managed explicitly via the Cookie header. Left
+        # alone, curl_cffi would also store every rotated Set-Cookie in the
+        # session's jar and send it *in addition to* (and before) our header,
+        # so a cookie swapped in with replace_cookie() would be shadowed by
+        # the stale jar copy.
+        self._purge_jar_session_cookies()
         response = await self._http._request_with_retry(
             "GET",
             SESSION_URL,
+            discard_cookies=True,
             headers={
                 "Cookie": cookie_header,
                 "Accept": "application/json",
