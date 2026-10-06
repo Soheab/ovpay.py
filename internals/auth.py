@@ -8,7 +8,7 @@ import logging
 import os
 import pathlib
 from http.cookies import SimpleCookie
-from typing import TYPE_CHECKING, ClassVar, Self
+from typing import TYPE_CHECKING, ClassVar, Self, cast
 
 from curl_cffi.requests import RequestsError
 
@@ -279,6 +279,8 @@ class CookieManager:
         """Extract a rotated, possibly chunked NextAuth session cookie."""
         chunks: list[tuple[int, str]] = []
         for header in response.headers.get_list("Set-Cookie"):
+            if not header:
+                continue
             parsed = SimpleCookie()
             parsed.load(header)
             for name, morsel in parsed.items():
@@ -488,7 +490,7 @@ class Authenticator:
             },
         )
         response.raise_for_status()
-        data: SessionData = response.json()
+        data = cast("SessionData", response.json())  # type: ignore
         rotated_cookie = CookieManager.extract_rotated(response)
         if rotated_cookie is not None and self._cookie_manager is not None:
             self._cookie_manager.store_rotated(rotated_cookie)
