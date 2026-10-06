@@ -52,6 +52,7 @@ if TYPE_CHECKING:
         SearchSuggestionsData,
         TransitAccountData,
         TripDetailsData,
+        TripItemData,
         TripsPageData,
         WebConfigData,
     )
@@ -118,7 +119,7 @@ class ExportQuery:
         self._excluded_trip_ids.extend(trip_ids)
         return self
 
-    def _to_body(self, offset: int = 0) -> dict[str, object]:
+    def _to_body(self) -> dict[str, object]:
         return {
             "from": self._from,
             "to": self._to,
@@ -549,9 +550,9 @@ class OVPayClient:
         *,
         offset: int = 0,
     ) -> TripsPage:
-        raw = await self._http.post(
+        raw: list[TripItemData] | TripsPageData = await self._http.post(
             "/api/v2/TripExport/trips",
-            json=query._to_body(offset),
+            json=query._to_body(),
             extra_headers={"Referer": "https://www.ovpay.nl/"},
         )
         # The export endpoint returns a flat list, not a paginated envelope.
@@ -563,7 +564,11 @@ class OVPayClient:
                 "items": raw,
             }
             return TripsPage.from_dict(self, paged)
-        return TripsPage.from_dict(self, raw)
+        # The request body has no offset, so every call returns this same page;
+        # it has to be the last one or the paginator would refetch it forever.
+        page = TripsPage.from_dict(self, raw)
+        page.end_of_list_reached = True
+        return page
 
     def export_trips(
         self,
