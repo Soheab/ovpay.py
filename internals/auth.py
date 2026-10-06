@@ -452,11 +452,10 @@ class Authenticator:
         403 (WAF), 500 (malformed token), etc. — is treated as not proven
         valid, since only a real 2xx confirms the API actually honored it.
         """
-        session = self._http._require_session()
         url = f"{self._http.base_url}/api/v1/PassengerAccounts"
         try:
-            response = await session.get(
-                url, headers={"Authorization": f"Bearer {token}"}
+            response = await self._http._request_with_retry(
+                "GET", url, headers={"Authorization": f"Bearer {token}"}
             )
             return 200 <= response.status_code < 300
         except RequestsError:
@@ -464,8 +463,8 @@ class Authenticator:
 
     async def _request_session(self, cookie_header: str) -> tuple[str, str | None]:
         """Hit the NextAuth session endpoint and return (token, error)."""
-        session = self._http._require_session()
-        response = await session.get(
+        response = await self._http._request_with_retry(
+            "GET",
             SESSION_URL,
             headers={
                 "Cookie": cookie_header,
@@ -588,14 +587,17 @@ class Authenticator:
         a real browser tab keeps its session warm) instead of only refreshing
         reactively on the next get_token() call.
 
-        No-op if already running, if there's no cookie to refresh with, or if
-        the refresh is already known to be dead. Stop with
-        stop_background_refresh().
+        No-op if already running or if there's no cookie to refresh with. A
+        loop that has already stopped (e.g. after SessionExpiredError) is
+        replaced by a new one. Stop with stop_background_refresh().
         """
-        if self._background_task is not None or self._cookie_manager is None:
+        if self._cookie_manager is None:
+            return
+        if self._background_task is not None and not self._background_task.done():
             return
         self._background_task = asyncio.create_task(
-            self._background_refresh_loop(min_interval)
+            self._background_refresh_loop(min_interval),
+            name="ovpay-background-refresh",
         )
 
     def stop_background_refresh(self) -> None:
@@ -603,27 +605,62 @@ class Authenticator:
             self._background_task.cancel()
             self._background_task = None
 
+    @property
+    def background_refresh_running(self) -> bool:
+        task = self._background_task
+        return task is not None and not task.done()
+
     async def _background_refresh_loop(self, min_interval: float) -> None:
+        failures = 0
         while True:
             expires_at = self.token_expires_at
-            if expires_at is None or self._refresh_dead is not None:
+            if expires_at is None:
+                _logger.warning("Background refresh stopping: no bearer token")
+                return
+            if self._refresh_dead is not None:
+                _logger.warning(
+                    "Background refresh stopping: session permanently expired"
+                )
                 return
 
-            now = datetime.datetime.now(tz=datetime.UTC)
-            sleep_for = max((expires_at - self.LEEWAY - now).total_seconds(), min_interval)
+            if failures:
+                # Exponential backoff after errors, capped at 5 minutes.
+                sleep_for = min(min_interval * 2 ** (failures - 1), 300.0)
+            else:
+                now = datetime.datetime.now(tz=datetime.UTC)
+                sleep_for = max(
+                    (expires_at - self.LEEWAY - now).total_seconds(), min_interval
+                )
             await asyncio.sleep(sleep_for)
 
             try:
                 await self.refresh()
             except SessionExpiredError:
-                _logger.debug(
-                    "Background refresh stopping: session permanently expired"
+                _logger.warning(
+                    "Background refresh stopping: session permanently expired; "
+                    "call replace_cookie() with a fresh cookie to resume"
                 )
                 return
-            except AuthenticationError:
-                # Fell back to a static token (or no cookie manager left);
-                # nothing more for the background loop to do.
+            except InvalidCookieError:
+                _logger.warning(
+                    "Background refresh stopping: the session cookie is invalid; "
+                    "call replace_cookie() with a fresh cookie to resume"
+                )
                 return
+            except AuthenticationError as exc:
+                _logger.warning("Background refresh stopping: %s", exc)
+                return
+            except Exception:
+                # Transport errors, 5xx/WAF responses, malformed JSON, ...: none
+                # of these mean the session is dead, so keep the loop alive.
+                failures += 1
+                _logger.warning(
+                    "Background refresh failed (attempt %d), retrying",
+                    failures,
+                    exc_info=True,
+                )
+            else:
+                failures = 0
 
     def replace_cookie(self, cookie: str | pathlib.Path) -> None:
         """Swap in a new session cookie (e.g. pasted fresh from the browser
