@@ -274,14 +274,6 @@ class CookieManager:
         self._cached_header = header
         return header
 
-    def jwt(self) -> JWTToken:
-        """Decode the session cookie's bearer token into a JWTToken.
-
-        Raises InvalidCookieError if the cookie doesn't decode to a JWT.
-        """
-        cookie_header = self.normalized()
-        return JWTToken.from_token(cookie_header.split("=", 1)[1])
-
     @staticmethod
     def extract_rotated(response: Response) -> str | None:
         """Extract a rotated, possibly chunked NextAuth session cookie."""
@@ -367,15 +359,6 @@ class Authenticator:
     @property
     def using_cookie(self) -> bool:
         return self._using_cookie
-
-    @property
-    def cookie_is_expired(self) -> bool:
-        if self._cookie_manager is None:
-            return False
-        try:
-            return self._cookie_manager.jwt().is_expired
-        except InvalidCookieError:
-            return True
 
     @property
     def is_expired(self) -> bool:
