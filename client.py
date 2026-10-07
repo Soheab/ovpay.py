@@ -197,6 +197,15 @@ class OVPayClient:
         read. Defaults to False. Independently of this, whenever OVpay rotates
         the session cookie, the new one is written to the file so it survives
         a restart.
+    login_cookie: :class:`str` | :class:`pathlib.Path` | :data:`None`
+        The cookies of ``login.ovpay.nl`` (OVpay's login server), as a cookie
+        header string or a path to a file containing one. OVpay only renews a
+        session for a limited time after logging in (about 6 hours); with
+        these cookies the client then signs in again on its own, like a
+        browser does, instead of raising :exc:`SessionExpiredError`. Works for
+        as long as the login server still recognizes them. Updates the login
+        server sends back are written to the file when a path is given. Can be
+        used without `cookie`, in which case the client signs in on start.
     enable_poller: :class:`bool`
         When True, the client will start a background poller that fetches trips,
         payments, and balance changes on a fixed interval. Defaults to False.
@@ -230,6 +239,7 @@ class OVPayClient:
         cookie: str | pathlib.Path | None = None,
         session: AsyncSession[Any] | None = None,
         rewrite_cookie_file: bool = False,
+        login_cookie: str | pathlib.Path | None = None,
         enable_poller: bool = False,
         poller_interval: float = 60.0,
         auto_refresh: bool = False,
@@ -237,16 +247,18 @@ class OVPayClient:
         transport_retry_backoff: float | None = None,
     ) -> None:
     # fmt: on
-        if auto_refresh and not cookie:
+        if auto_refresh and not cookie and not login_cookie:
             raise ValueError(
-                "auto_refresh requires a session cookie to refresh with; a "
-                "static token alone cannot be refreshed."
+                "auto_refresh requires a session cookie or login.ovpay.nl "
+                "cookies to refresh with; a static token alone cannot be "
+                "refreshed."
             )
         self._http = HTTPClient(
             token=token,
             cookie=cookie,
             session=session,
             rewrite_cookie_file=rewrite_cookie_file,
+            login_cookie=login_cookie,
             transport_retry_attempts=transport_retry_attempts,
             transport_retry_backoff=transport_retry_backoff,
         )
@@ -310,6 +322,14 @@ class OVPayClient:
         running. Accepts the same values as the `cookie` parameter.
         """
         self._http.replace_cookie(cookie)
+
+    def replace_login_cookie(self, cookie: str | pathlib.Path) -> None:
+        """Swap in new login.ovpay.nl cookies without recreating the client.
+
+        Use this after logging in manually once the login server stopped
+        recognizing the old ones. Accepts the same values as `login_cookie`.
+        """
+        self._http.replace_login_cookie(cookie)
 
     def replace_token(self, token: str | pathlib.Path) -> None:
         """Swap in a new static bearer token fallback without recreating the

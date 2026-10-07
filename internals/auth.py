@@ -21,6 +21,7 @@ from .errors import (
     TokenExpiredError,
     _format_duration,
 )
+from .login import LoginCookieJar, Relogin
 
 if TYPE_CHECKING:
     from curl_cffi.requests import Response
@@ -333,8 +334,16 @@ class Authenticator:
         token: str | pathlib.Path | None,
         *,
         rewrite_cookie_file: bool = False,
+        login_cookie: str | pathlib.Path | None = None,
     ) -> None:
         self._http: HTTPClient = http
+        # Optional: lets the client sign in again once the session can no
+        # longer be renewed (see internals/login.py).
+        self._relogin: Relogin | None = (
+            Relogin(http, LoginCookieJar(login_cookie))
+            if login_cookie is not None
+            else None
+        )
         self._cookie_manager: CookieManager | None = (
             CookieManager(cookie, rewrite_cookie_file=rewrite_cookie_file)
             if cookie is not None
@@ -561,7 +570,7 @@ class Authenticator:
             )
 
         if not self._using_cookie and self.is_actually_expired:
-            if self._cookie_manager is not None:
+            if self.can_refresh:
                 try:
                     return await self.refresh()
                 except AuthenticationError:
@@ -631,9 +640,40 @@ class Authenticator:
             token = await self._refresh()
         return token
 
+    @property
+    def can_refresh(self) -> bool:
+        """Whether there's a session cookie or login cookie to get tokens with."""
+        return self._cookie_manager is not None or self._relogin is not None
+
+    async def _fetch_or_sign_in(self) -> str:
+        """Get a token from the session cookie, signing in again with the
+        login.ovpay.nl cookies when the session can't provide one."""
+        if self._cookie_manager is None:
+            return await self._sign_in()
+        try:
+            return await self.fetch_token()
+        except (SessionExpiredError, InvalidCookieError) as exc:
+            if self._relogin is None:
+                raise
+            _logger.warning(
+                "OVpay session can't provide a token (%s); signing in again",
+                str(exc).split("\n", 1)[0],
+            )
+            return await self._sign_in()
+
+    async def _sign_in(self) -> str:
+        assert self._relogin is not None
+        cookie_header = CookieManager.normalize(await self._relogin.sign_in())
+        if self._cookie_manager is None:
+            self._cookie_manager = CookieManager(cookie_header)
+        else:
+            self._cookie_manager.store_rotated(cookie_header)
+        self._http._cookie = cookie_header
+        return await self.fetch_token()
+
     async def _refresh(self) -> str:
         _logger.debug("Refreshing bearer token (expired=%s)", self.is_expired)
-        if self._cookie_manager is None:
+        if not self.can_refresh:
             raise NoTokenError(
                 "Cannot refresh a static bearer token: no session cookie was "
                 "provided. Construct the client with a cookie to enable refresh."
@@ -647,12 +687,13 @@ class Authenticator:
             raise dead._fresh()
 
         try:
-            token = await self.fetch_token()
+            token = await self._fetch_or_sign_in()
         except SessionExpiredError as exc:
             if not retrying_dead:
                 _logger.warning(
                     "OVpay rejected the session; retrying every %d minutes "
-                    "until it recovers or replace_cookie() is called: %s",
+                    "until it recovers or replace_cookie() / "
+                    "replace_login_cookie() is called: %s",
                     DEAD_SESSION_RETRY_SECONDS // 60,
                     str(exc).split("\n", 1)[0],
                 )
@@ -694,7 +735,7 @@ class Authenticator:
         loop that has already stopped (e.g. on an invalid cookie) is replaced
         by a new one. Stop with stop_background_refresh().
         """
-        if self._cookie_manager is None:
+        if not self.can_refresh:
             return
         if self._background_task is not None and not self._background_task.done():
             return
@@ -796,6 +837,12 @@ class Authenticator:
             self.stop_background_refresh()
             self.start_background_refresh()
 
+    def replace_login_cookie(self, cookie: str | pathlib.Path) -> None:
+        """Swap in new login.ovpay.nl cookies, clearing any cached failure."""
+        self._relogin = Relogin(self._http, LoginCookieJar(cookie))
+        self._refresh_dead = None
+        self._dead_retry_at = 0.0
+
     def replace_token(self, token: str | pathlib.Path) -> None:
         """Swap in a new static bearer token fallback."""
         self._static_token, data = JWTToken.read(token)
@@ -813,13 +860,20 @@ class Authenticator:
 
             if self._using_cookie and self._static_token:
                 fallback = self.use_static_token()
-            elif self._cookie_manager is not None:
+            elif self.can_refresh:
                 # A token rejected right around its expiry (the API's clock
                 # can be slightly ahead of ours) needs a rotation, not just a
                 # re-fetch, or NextAuth hands the same token back.
                 fallback = await self._rotate(
                     max_wait=REJECTED_EXPIRY_WINDOW_SECONDS + EXPIRY_SKEW_SECONDS
                 )
+                if fallback == rejected_token and self._relogin is not None:
+                    # The session keeps handing out a token the API refuses
+                    # (e.g. revoked server-side): start a new one.
+                    _logger.warning(
+                        "OVpay API rejected the session's token; signing in again"
+                    )
+                    fallback = await self._sign_in()
             else:
                 raise SessionExpiredError("OVpay API rejected the static bearer token")
 

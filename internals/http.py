@@ -72,16 +72,24 @@ class HTTPClient:
         base_url: str | None = None,
         session: AsyncSession[Response] | None = None,
         rewrite_cookie_file: bool = False,
+        login_cookie: str | pathlib.Path | None = None,
         transport_retry_attempts: int | None = DEFAULT_TRANSPORT_RETRY_ATTEMPTS,
         transport_retry_backoff: float| None  = DEFAULT_TRANSPORT_RETRY_BACKOFF,
     ) -> None:
-        if not token and not cookie:
-            raise ValueError("Must provide either a static token or a browser cookie.")
+        if not token and not cookie and not login_cookie:
+            raise ValueError(
+                "Must provide a static token, a browser cookie, or login.ovpay.nl "
+                "cookies."
+            )
 
         self.base_url = (base_url or self.BASE_URL).rstrip("/")
         self._cookie = cookie
         self._auth = Authenticator(
-            self, cookie=cookie, token=token, rewrite_cookie_file=rewrite_cookie_file
+            self,
+            cookie=cookie,
+            token=token,
+            rewrite_cookie_file=rewrite_cookie_file,
+            login_cookie=login_cookie,
         )
         self._session: AsyncSession[Response] | None = session
         self._session_owner: bool = session is None
@@ -113,7 +121,7 @@ class HTTPClient:
             )
         self._started = True
         try:
-            if self._cookie:
+            if self._cookie or self._auth.can_refresh:
                 _logger.debug("Fetching initial bearer token from cookie")
                 await self._auth.refresh()
         except BaseException:
@@ -125,6 +133,10 @@ class HTTPClient:
         """Swap in a new session cookie without recreating the client."""
         self._cookie = cookie
         self._auth.replace_cookie(cookie)
+
+    def replace_login_cookie(self, cookie: str | pathlib.Path) -> None:
+        """Swap in new login.ovpay.nl cookies without recreating the client."""
+        self._auth.replace_login_cookie(cookie)
 
     def replace_token(self, token: str | pathlib.Path) -> None:
         """Swap in a new static bearer token fallback without recreating the client."""
