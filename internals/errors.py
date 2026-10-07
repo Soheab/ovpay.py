@@ -64,7 +64,8 @@ class SessionExpiredError(AuthenticationError):
         alive, so the session's age at failure says whether such a limit was
         hit.
     last_refreshed_at: :class:`datetime.datetime` | :data:`None`
-        When this client last obtained a new token from the session.
+        When the session last issued a new token (the current token's
+        ``iat``).
     """
 
     def __init__(
@@ -92,7 +93,7 @@ class SessionExpiredError(AuthenticationError):
             )
         if self.last_refreshed_at is not None:
             parts.append(
-                "last new token at "
+                "last new token issued at "
                 f"{self.last_refreshed_at.isoformat(timespec='seconds')}"
             )
         return f". Session {'; '.join(parts)}." if parts else ""

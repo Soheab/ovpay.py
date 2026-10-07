@@ -361,8 +361,6 @@ class Authenticator:
         # (`_dead_retry_at`, monotonic) and cleared by replace_cookie().
         self._refresh_dead: SessionExpiredError | None = None
         self._dead_retry_at: float = 0.0
-        # When the last *new* token was obtained from the cookie.
-        self._last_rotated_at: datetime.datetime | None = None
 
         # Opt-in background refresh task; see start_background_refresh().
         self._background_task: asyncio.Task[None] | None = None
@@ -451,15 +449,16 @@ class Authenticator:
                 "after a retry; the browser session can no longer be refreshed",
                 error=error,
                 logged_in_at=self._token.auth_time if self._token else None,
-                last_refreshed_at=self._last_rotated_at,
+                last_refreshed_at=self._token.issued_at if self._token else None,
             )
 
         new_jwt = JWTToken.from_token(token)
         if token != self._token_str:
-            self._last_rotated_at = datetime.datetime.now(tz=datetime.UTC)
             auth_time = new_jwt.auth_time
             _logger.info(
-                "Obtained a new bearer token, valid until %s (login %s ago)",
+                "%s bearer token issued %s, valid until %s (login %s ago)",
+                "Using" if self._token_str is None else "Obtained a new",
+                new_jwt.issued_at.isoformat(timespec="seconds"),
                 new_jwt.expires_at.isoformat(timespec="seconds"),
                 _format_duration(datetime.datetime.now(tz=datetime.UTC) - auth_time)
                 if auth_time
