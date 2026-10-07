@@ -165,6 +165,49 @@ except SessionExpiredError:
     trips = await client.get_trips(xtat)
 ```
 
+### Staying signed in past OVpay's session limit
+
+OVpay only renews a session for a limited time after you log in (about 6
+hours); after that every renewal fails with `RefreshTokenError`. Your browser
+gets past this by quietly signing in again through OVpay's login server
+(`login.ovpay.nl`), which still recognizes it by its own cookies, so you
+aren't asked for the emailed code again. Give the client those cookies and it
+does the same:
+
+```python
+async with OVPayClient(
+    cookie=Path("cookies.txt"),
+    login_cookie=Path("login_cookies.txt"),
+    auto_refresh=True,
+) as client:
+    ...
+```
+
+`cookie` is optional here: with only `login_cookie`, the client signs in on
+start. Cookie updates the login server sends back are written to
+`login_cookies.txt`. Once the login server stops recognizing them too, the
+client raises `SessionExpiredError` saying a manual login is needed; log in,
+then pass the new cookies to `client.replace_login_cookie(...)`.
+
+To get the login server's cookies, in a desktop browser:
+
+1. Make sure you are logged in at https://www.ovpay.nl.
+2. Open the login server's account page in the same browser:
+   `https://login.ovpay.nl/v1/realms/<realm>/account`. `<realm>` is the last
+   part of the `iss` claim of your access token (the `issuer` of the token,
+   e.g. `https://login.ovpay.nl/v1/realms/<realm>`). It should open without
+   asking you to log in.
+3. In the developer tools' **Network** tab, reload and select the request to
+   `.../account`, then copy its whole `cookie:` request header. It must
+   contain `KEYCLOAK_IDENTITY`.
+4. Save it to `login_cookies.txt`.
+
+Don't log out of ovpay.nl to get there: logging out can end the login
+server's session, and with it the client's.
+
+> These cookies let anyone sign in to your OVpay account. Keep the file
+> private (e.g. `chmod 600 login_cookies.txt`) and out of Git.
+
 ## Examples
 
 ### Fetch trips
