@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import pathlib
+import time
 from http.cookies import SimpleCookie
 from typing import TYPE_CHECKING, ClassVar, Self, cast
 
@@ -18,6 +19,7 @@ from .errors import (
     NoTokenError,
     SessionExpiredError,
     TokenExpiredError,
+    _format_duration,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +43,11 @@ ROTATION_RETRY_DELAYS = (1.0, 2.0, 4.0)
 # After a 401, how close to expiry the rejected token may be for it to count as
 # "expired by the API's clock" and be worth waiting out, rather than rejected.
 REJECTED_EXPIRY_WINDOW_SECONDS = 10.0
+# NextAuth reports *any* failed refresh as RefreshTokenError, including a
+# momentary Keycloak/network problem on OVpay's side. So a session that failed
+# to refresh isn't written off for good: requests fail fast with the cached
+# SessionExpiredError, but OVpay is asked again after this many seconds.
+DEAD_SESSION_RETRY_SECONDS = 300.0
 SESSION_URL = "https://www.ovpay.nl/api/auth/session"
 
 _logger = logging.getLogger("ovpay.auth")
@@ -348,11 +355,14 @@ class Authenticator:
         self._token_str: str | None = self._static_token
         self._token: JWTToken | None = self._static_jwt
 
-        # Set once the cookie-backed refresh has been permanently rejected by
-        # the server (SessionExpiredError), so repeated get_token()/refresh()
-        # calls fail fast instead of hammering /api/auth/session again with a
-        # cookie that's already known to be dead. Cleared by replace_cookie().
+        # Set once the cookie-backed refresh has been rejected by the server
+        # (SessionExpiredError), so get_token()/refresh() fail fast instead of
+        # hammering /api/auth/session. Retried after DEAD_SESSION_RETRY_SECONDS
+        # (`_dead_retry_at`, monotonic) and cleared by replace_cookie().
         self._refresh_dead: SessionExpiredError | None = None
+        self._dead_retry_at: float = 0.0
+        # When the last *new* token was obtained from the cookie.
+        self._last_rotated_at: datetime.datetime | None = None
 
         # Opt-in background refresh task; see start_background_refresh().
         self._background_task: asyncio.Task[None] | None = None
@@ -440,10 +450,23 @@ class Authenticator:
                 "OVpay session returned an access token that the API rejected "
                 "after a retry; the browser session can no longer be refreshed",
                 error=error,
+                logged_in_at=self._token.auth_time if self._token else None,
+                last_refreshed_at=self._last_rotated_at,
             )
 
+        new_jwt = JWTToken.from_token(token)
+        if token != self._token_str:
+            self._last_rotated_at = datetime.datetime.now(tz=datetime.UTC)
+            auth_time = new_jwt.auth_time
+            _logger.info(
+                "Obtained a new bearer token, valid until %s (login %s ago)",
+                new_jwt.expires_at.isoformat(timespec="seconds"),
+                _format_duration(datetime.datetime.now(tz=datetime.UTC) - auth_time)
+                if auth_time
+                else "unknown",
+            )
         self._token_str = token
-        self._token = JWTToken.from_token(token)
+        self._token = new_jwt
         self._using_cookie = True
         return token
 
@@ -617,15 +640,24 @@ class Authenticator:
                 "provided. Construct the client with a cookie to enable refresh."
             )
 
-        if self._refresh_dead is not None:
+        retrying_dead = self._refresh_dead is not None
+        if retrying_dead and time.monotonic() < self._dead_retry_at:
             if self._static_token:
                 return self.use_static_token()
-            raise self._refresh_dead
+            raise self._refresh_dead  # type: ignore[misc]
 
         try:
-            return await self.fetch_token()
+            token = await self.fetch_token()
         except SessionExpiredError as exc:
+            if not retrying_dead:
+                _logger.warning(
+                    "OVpay rejected the session; retrying every %d minutes "
+                    "until it recovers or replace_cookie() is called: %s",
+                    DEAD_SESSION_RETRY_SECONDS // 60,
+                    str(exc).split("\n", 1)[0],
+                )
             self._refresh_dead = exc
+            self._dead_retry_at = time.monotonic() + DEAD_SESSION_RETRY_SECONDS
             if self._static_token:
                 return self.use_static_token()
             raise
@@ -633,6 +665,11 @@ class Authenticator:
             if self._static_token:
                 return self.use_static_token()
             raise
+
+        if retrying_dead:
+            _logger.warning("OVpay session recovered after an earlier rejection")
+            self._refresh_dead = None
+        return token
 
     async def refresh(self) -> str:
         """Force a refresh of a cookie-backed bearer token."""
@@ -649,9 +686,13 @@ class Authenticator:
         unproductive attempt; it doubles per consecutive failure, up to 5
         minutes.
 
+        A rejected session (SessionExpiredError) doesn't stop the loop: it
+        asks OVpay again every DEAD_SESSION_RETRY_SECONDS, in case the
+        rejection was a passing problem on OVpay's side.
+
         No-op if already running or if there's no cookie to refresh with. A
-        loop that has already stopped (e.g. after SessionExpiredError) is
-        replaced by a new one. Stop with stop_background_refresh().
+        loop that has already stopped (e.g. on an invalid cookie) is replaced
+        by a new one. Stop with stop_background_refresh().
         """
         if self._cookie_manager is None:
             return
@@ -680,12 +721,9 @@ class Authenticator:
                 _logger.warning("Background refresh stopping: no bearer token")
                 return
             if self._refresh_dead is not None:
-                _logger.warning(
-                    "Background refresh stopping: session permanently expired"
-                )
-                return
-
-            if failures:
+                # Rejected session: check back when the retry cool-down ends.
+                sleep_for = max(self._dead_retry_at - time.monotonic(), 1.0)
+            elif failures:
                 # Exponential backoff after errors, capped at 5 minutes.
                 sleep_for = min(min_interval * 2 ** (failures - 1), 300.0)
             else:
@@ -698,18 +736,17 @@ class Authenticator:
 
             before = self._token_str
             try:
-                if self._using_cookie:
+                if self._refresh_dead is not None:
+                    await self.refresh()
+                elif self._using_cookie:
                     await self._refresh_if_needed()
                 elif self.is_expired:
                     # Running on the static fallback, which is about to run
                     # out; try to get back onto the cookie.
                     await self.refresh()
             except SessionExpiredError:
-                _logger.warning(
-                    "Background refresh stopping: session permanently expired; "
-                    "call replace_cookie() with a fresh cookie to resume"
-                )
-                return
+                # Logged by _refresh(); keep checking back after the cool-down.
+                continue
             except InvalidCookieError:
                 _logger.warning(
                     "Background refresh stopping: the session cookie is invalid; "
@@ -729,6 +766,8 @@ class Authenticator:
                     exc_info=True,
                 )
             else:
+                if self._refresh_dead is not None:
+                    continue  # still rejected, on the static fallback
                 if self._token_str == before and self.is_expired:
                     # No error, but no new token either (e.g. NextAuth kept
                     # returning the old one): back off instead of spinning.
@@ -749,9 +788,10 @@ class Authenticator:
         else:
             self._cookie_manager.replace_cookie(cookie)
         self._refresh_dead = None
+        self._dead_retry_at = 0.0
 
-        # A dead background loop exits on its own once _refresh_dead is set;
-        # restart it here so a fresh cookie keeps getting proactively refreshed.
+        # Restart the loop so it isn't left sleeping out a cool-down (or
+        # stopped on an invalid cookie) for a cookie that has been replaced.
         if self._background_task is not None:
             self.stop_background_refresh()
             self.start_background_refresh()

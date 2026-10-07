@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import datetime
+
 __all__ = (
     "AuthenticationError",
     "InvalidCookieError",
@@ -51,9 +53,52 @@ class SessionExpiredError(AuthenticationError):
 
     The NextAuth session behind the cookie has expired and can no longer be
     refreshed, so a new login is required.
+
+    Attributes
+    ----------
+    error: :class:`str` | :data:`None`
+        The error the session endpoint reported, e.g. ``"RefreshTokenError"``.
+    logged_in_at: :class:`datetime.datetime` | :data:`None`
+        When the browser login behind the session happened (the token's
+        ``auth_time``). Identity providers cap how long a login can be kept
+        alive, so the session's age at failure says whether such a limit was
+        hit.
+    last_refreshed_at: :class:`datetime.datetime` | :data:`None`
+        When this client last obtained a new token from the session.
     """
 
-    def __init__(self, message: str, *, error: str | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        error: str | None = None,
+        logged_in_at: datetime.datetime | None = None,
+        last_refreshed_at: datetime.datetime | None = None,
+    ) -> None:
         self.error: str | None = error
+        self.logged_in_at: datetime.datetime | None = logged_in_at
+        self.last_refreshed_at: datetime.datetime | None = last_refreshed_at
         detail = f" (server reported {error!r})" if error else ""
-        super().__init__(f"{message}{detail}\n\n{RELOGIN_HINT}")
+        super().__init__(f"{message}{detail}{self._timeline()}\n\n{RELOGIN_HINT}")
+
+    def _timeline(self) -> str:
+        now = datetime.datetime.now(tz=datetime.UTC)
+        parts: list[str] = []
+        if self.logged_in_at is not None:
+            age = _format_duration(now - self.logged_in_at)
+            parts.append(
+                f"logged in at {self.logged_in_at.isoformat(timespec='seconds')} "
+                f"({age} ago)"
+            )
+        if self.last_refreshed_at is not None:
+            parts.append(
+                "last new token at "
+                f"{self.last_refreshed_at.isoformat(timespec='seconds')}"
+            )
+        return f". Session {'; '.join(parts)}." if parts else ""
+
+
+def _format_duration(delta: datetime.timedelta) -> str:
+    minutes = max(int(delta.total_seconds()) // 60, 0)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m" if hours else f"{minutes}m"
