@@ -644,7 +644,7 @@ class Authenticator:
         if retrying_dead and time.monotonic() < self._dead_retry_at:
             if self._static_token:
                 return self.use_static_token()
-            raise self._refresh_dead  # type: ignore[misc]
+            raise self._refresh_dead._fresh()
 
         try:
             token = await self.fetch_token()

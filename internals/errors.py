@@ -97,6 +97,17 @@ class SessionExpiredError(AuthenticationError):
             )
         return f". Session {'; '.join(parts)}." if parts else ""
 
+    def _fresh(self) -> SessionExpiredError:
+        """Return a new instance with the same details.
+
+        Raising one exception object repeatedly appends to its traceback each
+        time, so a cached failure has to be re-raised as a copy.
+        """
+        clone = type(self).__new__(type(self))
+        clone.__dict__.update(self.__dict__)
+        Exception.__init__(clone, *self.args)
+        return clone
+
 
 def _format_duration(delta: datetime.timedelta) -> str:
     minutes = max(int(delta.total_seconds()) // 60, 0)
